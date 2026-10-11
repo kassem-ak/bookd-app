@@ -33,6 +33,7 @@ import {
   CoachPackagesOverlay,
 } from '../overlays/CoachOverlays';
 import { CoachHoursOverlay, CoachSubjectsOverlay } from '../overlays/CoachSubjectsOverlay';
+import { PaymentMethodsOverlay } from '../overlays/PaymentMethodsOverlay';
 
 export function OverlayRouter({ id }: { id: string }) {
   switch (id) {
@@ -100,6 +101,8 @@ export function OverlayRouter({ id }: { id: string }) {
       return <CoachSubjectsOverlay />;
     case 'coachPackages':
       return <CoachPackagesOverlay />;
+    case 'paymentMethods':
+      return <PaymentMethodsOverlay />;
     default:
       return null;
   }

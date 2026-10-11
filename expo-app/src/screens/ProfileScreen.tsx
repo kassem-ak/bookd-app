@@ -221,6 +221,13 @@ export function ProfileScreen() {
           body="Booking updates"
           onPress={s.openNotifs}
         />
+        <RowDivider />
+        <GroupRow
+          icon="credit-card"
+          title="Payment methods"
+          body="Cards and Whish, to pay and to be paid"
+          onPress={() => s.set('overlay', 'paymentMethods')}
+        />
       </Card>
 
       {/* ---------------------------- SETTINGS ---------------------------- */}

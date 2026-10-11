@@ -304,5 +304,28 @@ begin
     if (select status from payments where id = v_good) <> 'expired' then raise exception 'FAIL 22b: one bad row stalled the tick'; end if;
   end;
 
+  -- 23. begin_charge returns the locked totals; a free capture of a paying payment is refused.
+  declare v_t uuid; v_r record;
+  begin
+    set local role service_role;
+    v_t := private.open_payment('session', gen_random_uuid(), v_me, v_other, 1000);
+    select * into v_r from payments_begin_charge(v_t);
+    if v_r.begun is not true or v_r.price_cents <> 1000 or v_r.fee_cents is distinct from (select fee_cents from payments where id = v_t) then
+      raise exception 'FAIL 23: begin_charge returned %', row_to_json(v_r);
+    end if;
+    begin
+      perform payments_mark_held(v_t, 'free:' || v_t, 0, null);
+      raise exception 'FAIL 23b: a free capture of a paying payment was accepted';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'This payment is not free.' then raise exception 'FAIL 23b: %', v_err; end if;
+    end;
+    select * into v_r from payments_begin_charge(v_t);
+    if v_r.begun is not false or v_r.price_cents is not null or v_r.fee_cents is not null then
+      raise exception 'FAIL 23c: second begin_charge returned %', row_to_json(v_r);
+    end if;
+  end;
+
   raise exception 'ALL PAYMENTS CORE CHECKS PASSED';
 end $$;

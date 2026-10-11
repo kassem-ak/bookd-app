@@ -149,7 +149,16 @@ begin
   select * into v_q from apply_promo_code(v_pay, 'FREE100');
   if (v_q.price_cents, v_q.fee_cents, v_q.total_cents) is distinct from (0, 0, 0) then raise exception 'FAIL 6: quote %', row_to_json(v_q); end if;
   set local role service_role;
-  if not payments_begin_charge(v_pay) then raise exception 'FAIL 6b: free payment would not start'; end if;
+  if not (select begun from payments_begin_charge(v_pay)) then raise exception 'FAIL 6b: free payment would not start'; end if;
+  -- 6b2. A real capture of a free payment is refused.
+  begin
+    perform payments_mark_held(v_pay, 'zz_not_free', 0, null);
+    raise exception 'FAIL 6b2: a real capture of a free payment was accepted';
+  exception when others then
+    get stacked diagnostics v_err = message_text;
+    if v_err like 'FAIL%' then raise; end if;
+    if v_err <> 'This payment is free.' then raise exception 'FAIL 6b2: %', v_err; end if;
+  end;
   perform payments_mark_held(v_pay, 'free:' || v_pay, 0, null);
   if (select status from bookings where id = v_booking) <> 'confirmed' then raise exception 'FAIL 6c: free booking not confirmed'; end if;
   update bookings set status = 'completed' where id = v_booking;

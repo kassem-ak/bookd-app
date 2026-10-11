@@ -106,16 +106,20 @@ async function handle(req: Request): Promise<Response> {
     const paymentId = String(body.paymentId ?? "");
     const methodId = String(body.methodId ?? "");
     const { data: payment } = await admin.from("payments")
-      .select("id, payer_id, price_cents, fee_cents, status").eq("id", paymentId).maybeSingle();
+      .select("id, payer_id, status").eq("id", paymentId).maybeSingle();
     if (!payment || payment.payer_id !== me) return json({ error: "That payment was not found." }, 404);
     // A double-submit of a checkout that already went through is not an error.
     if (payment.status === "held") return json({ ok: true });
 
+    // Lock first, then charge what the lock returns: a code taken off in the gap cannot change the total.
+    const { data: lock, error: beginError } = await admin.rpc("payments_begin_charge", { p_payment: payment.id });
+    if (beginError) return json({ error: "Could not start the payment." }, 500);
+    const locked = (Array.isArray(lock) ? lock[0] : lock) as { begun: boolean; price_cents: number; fee_cents: number } | null;
+    if (locked?.begun !== true) return json({ error: "This checkout has expired or is already paid. Book again if needed." }, 409);
+    const totalCents = locked.price_cents + locked.fee_cents;
+
     // A 100% promo code leaves nothing to charge: hold it with no method and no gateway call.
-    if (payment.price_cents + payment.fee_cents === 0) {
-      const { data: begunFree, error: beginFreeError } = await admin.rpc("payments_begin_charge", { p_payment: payment.id });
-      if (beginFreeError) return json({ error: "Could not start the payment." }, 500);
-      if (begunFree !== true) return json({ error: "This checkout has expired or is already paid. Book again if needed." }, 409);
+    if (totalCents === 0) {
       const { error: freeError } = await admin.rpc("payments_mark_held", {
         p_payment: payment.id, p_ref: "free:" + payment.id, p_cost: 0, p_method: null,
       });
@@ -131,17 +135,14 @@ async function handle(req: Request): Promise<Response> {
     const { data: method } = await admin.from("payment_methods")
       .select("id, user_id, token, can_pay, removed_at").eq("id", methodId).maybeSingle();
     if (!method || method.user_id !== me || method.removed_at || !method.can_pay) {
+      await admin.rpc("payments_end_charge", { p_payment: payment.id });
       return json({ error: "Pick one of your payment methods." }, 422);
     }
-
-    const { data: begun, error: beginError } = await admin.rpc("payments_begin_charge", { p_payment: payment.id });
-    if (beginError) return json({ error: "Could not start the payment." }, 500);
-    if (begun !== true) return json({ error: "This checkout has expired or is already paid. Book again if needed." }, 409);
 
     let result;
     try {
       result = await gateway.charge({
-        token: method.token, amountCents: payment.price_cents + payment.fee_cents, reference: payment.id,
+        token: method.token, amountCents: totalCents, reference: payment.id,
       });
     } catch (e) {
       console.error(`PAYMENTS: charge threw for ${payment.id}: ${e instanceof Error ? e.message : String(e)}`);

@@ -228,6 +228,13 @@ export function ProfileScreen() {
           body="Cards and Whish, to pay and to be paid"
           onPress={() => s.set('overlay', 'paymentMethods')}
         />
+        <RowDivider />
+        <GroupRow
+          icon="trending-up"
+          title="Earnings"
+          body="Money from sessions, courts and events you run"
+          onPress={() => s.set('overlay', 'earnings')}
+        />
       </Card>
 
       {/* ---------------------------- SETTINGS ---------------------------- */}

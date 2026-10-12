@@ -1,6 +1,9 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { MissingSubject, OverlayHeader, OverlayScaffold } from '../components/Overlay';
+import { usePaymentConfig } from '../components/usePaymentConfig';
+import { paymentsOn } from '../lib/payments';
 import {
   Button, Card, Chip, Field, FormSheet, Icon, IconButton, Row, SectionHeading, VoltButton,
 } from '../components/ui';
@@ -139,6 +142,8 @@ export function BookingOverlay() {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [bookingQuote, setBookingQuote] = React.useState<{ redeeming: boolean; dueNow: number } | null>(null);
+  const paymentConfig = usePaymentConfig();
+  const [paid, setPaid] = React.useState(false);
   const personId = p?.id;
   React.useEffect(() => {
     if (!personId) return;
@@ -316,6 +321,8 @@ export function BookingOverlay() {
     .sort(([a], [b]) => (a < b ? -1 : 1));
 
   const usageKnown = !selectedPkg?.packageId || owned !== null;
+  const payKind = selectedPkg?.packageId ? 'package' : 'session';
+  const takesPayment = paymentsOn(paymentConfig, payKind);
   const held = selectedPkg?.packageId ? owned?.get(selectedPkg.packageId) : undefined;
   const total = held?.total ?? selectedPkg?.sessions ?? 0;
   const remaining = held ? held.remaining : total;
@@ -338,27 +345,38 @@ export function BookingOverlay() {
     return (
       <OverlayScaffold header={<OverlayHeader title="Booking confirmed" onBack={s.closeOverlay} />}>
         <View style={{ paddingHorizontal: 18, alignItems: 'center', paddingTop: 60 }}>
-          <View style={{ width: 74, height: 74, borderRadius: 999, backgroundColor: c.volt, alignItems: 'center', justifyContent: 'center' }}>
-            <Icon name="check" size={34} color={c.ink} />
-          </View>
-          <Text style={[t.overlayTitle, { fontSize: 24, color: c.txt, marginTop: 18 }]}>You are booked!</Text>
-          <Text style={[t.bodyLg, { color: c.txt2, marginTop: 8, textAlign: 'center' }]}>
-            {selectedPkg.name} with {p.name.split(' ')[0]}
-            {bookDate ? ` · ${bookingDayLabel(bookDate)}` : ''}{bookSlot ? ` · ${bookSlot}` : ''}
-          </Text>
-          {bookingQuote && (
-            <Text style={[t.bodySm, { color: c.txt3, marginTop: 8, textAlign: 'center' }]}>
-              {bookingQuote.redeeming
-                ? 'Covered by your pack — nothing extra to pay for this booking.'
-                : bookingQuote.dueNow > 0
-                  ? `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
-                  : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
-            </Text>
+          {takesPayment && bookingQuote && !bookingQuote.redeeming && bookingQuote.dueNow > 0 && !paid ? (
+            <View style={{ width: '100%' }}>
+              <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>
+              <CheckoutPanel onPaid={() => setPaid(true)} />
+            </View>
+          ) : (
+            <>
+              <View style={{ width: 74, height: 74, borderRadius: 999, backgroundColor: c.volt, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="check" size={34} color={c.ink} />
+              </View>
+              <Text style={[t.overlayTitle, { fontSize: 24, color: c.txt, marginTop: 18 }]}>You are booked!</Text>
+              <Text style={[t.bodyLg, { color: c.txt2, marginTop: 8, textAlign: 'center' }]}>
+                {selectedPkg.name} with {p.name.split(' ')[0]}
+                {bookDate ? ` · ${bookingDayLabel(bookDate)}` : ''}{bookSlot ? ` · ${bookSlot}` : ''}
+              </Text>
+              {bookingQuote && (
+                <Text style={[t.bodySm, { color: c.txt3, marginTop: 8, textAlign: 'center' }]}>
+                  {bookingQuote.redeeming
+                    ? 'Covered by your pack — nothing extra to pay for this booking.'
+                    : bookingQuote.dueNow > 0
+                      ? takesPayment
+                        ? 'Paid. The money is held until the session is done.'
+                        : `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
+                      : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
+                </Text>
+              )}
+              <View style={{ height: 24 }} />
+              <View style={{ width: '100%' }}>
+                <VoltButton label="View in bookings" onPress={s.goToBookings} />
+              </View>
+            </>
           )}
-          <View style={{ height: 24 }} />
-          <View style={{ width: '100%' }}>
-            <VoltButton label="View in bookings" onPress={s.goToBookings} />
-          </View>
         </View>
       </OverlayScaffold>
     );
@@ -381,7 +399,9 @@ export function BookingOverlay() {
                 : redeeming
                   ? `Covered by your pack — nothing extra to pay for this booking. ${remaining} of ${total} sessions left in this pack.`
                   : dueNow > 0
-                    ? "Payable to the coach at your session — BOOK'D does not take payment."
+                    ? takesPayment
+                      ? "You pay when you confirm. BOOK'D holds the money until the session is done."
+                      : "Payable to the coach at your session — BOOK'D does not take payment."
                     : "This coach has not set a price. Agree it with them directly — BOOK'D does not take payment."}
           </Text>
           {bookingError && (

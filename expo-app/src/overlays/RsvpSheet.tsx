@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { Sheet } from '../components/Sheet';
+import { usePaymentConfig } from '../components/usePaymentConfig';
 import { Chip, Row, Segmented, SectionHeading, Toggle, VoltButton } from '../components/ui';
 import { formatCents } from '../lib/bookings';
 import { Venue } from '../lib/courts';
+import { paymentsOn } from '../lib/payments';
 import { perHourLabel, rsvpSubject } from '../state/courtsData';
 import { useStore } from '../state/store';
 import { radii, useTheme } from '../theme';
@@ -128,11 +131,24 @@ export function RsvpSheet() {
   };
 
   const [booked, setBooked] = useState(false);
+  const paymentConfig = usePaymentConfig();
+  const [paid, setPaid] = useState(false);
+  const takesPayment = paymentsOn(paymentConfig, perHour ? 'court' : 'tournament');
   const confirm = () => {
     void s.confirmRsvp().then((ok) => { if (ok) setBooked(true); });
   };
 
   const canConfirm = Boolean(subject) && (!perHour || Boolean(s.rsvpStartsAt));
+
+  if (booked && takesPayment && !paid) {
+    return (
+      <Sheet title="Pay to confirm" subtitle={venue ? venue.name : ''} onClose={close}>
+        <View style={{ padding: 16 }}>
+          <CheckoutPanel onPaid={() => setPaid(true)} />
+        </View>
+      </Sheet>
+    );
+  }
 
   if (booked) {
     return (
@@ -293,7 +309,7 @@ export function RsvpSheet() {
         <View style={{ flex: 1 }}>
           <Text style={[t.label, { color: c.txt }]}>Total</Text>
           <Text style={[t.caption, { fontSize: 11.5, color: c.txt3, marginTop: 2 }]}>
-            Estimate · confirmed by the venue
+            {takesPayment ? 'You pay this when you confirm' : 'Estimate · confirmed by the venue'}
           </Text>
         </View>
         <Text style={[t.price, { fontSize: 18, color: c.accent }]}>{formatCents(total)}</Text>

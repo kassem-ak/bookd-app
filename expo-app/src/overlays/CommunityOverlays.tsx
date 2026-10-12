@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { CommunityFields } from '../components/CommunityFields';
 import { MissingSubject, OverlayHeader, OverlayScaffold } from '../components/Overlay';
 import {
   Avatar, Button, Card, Chip, ConfirmSheet, Field, Icon, IconButton, MicroBadge, Row,
   SectionHeading, Segmented, StripedPlaceholder, VoltButton,
 } from '../components/ui';
+import { usePaymentConfig } from '../components/usePaymentConfig';
 import {
-  EventDetail, EventPhoto, feeLabel, fetchEvent, fetchEventPhotos,
+  EventDetail, EventPhoto, feeLabel, fetchEvent, fetchEventPhotos, rsvpToEvent,
 } from '../lib/events';
+import { paymentsOn } from '../lib/payments';
 import { CommunityRole, EventSuggestion, isMeetup } from '../state/models';
 import * as D from '../state/sampleData';
 import { eventDayOptions, isExplicit, useStore } from '../state/store';
@@ -99,6 +102,10 @@ export function EventDetailOverlay() {
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [photos, setPhotos] = useState<EventPhoto[]>([]);
   const [withdrawing, setWithdrawing] = useState(false);
+  const paymentConfig = usePaymentConfig();
+  const eventTakesPayment = paymentsOn(paymentConfig, 'event') && (detail?.feeCents ?? 0) > 0;
+  const [paying, setPaying] = useState(false);
+  const [rsvpError, setRsvpError] = useState<string | null>(null);
   const evId = ev?.id ?? null;
   useEffect(() => {
     if (!evId) { setDetail(null); setPhotos([]); return; }
@@ -133,9 +140,17 @@ export function EventDetailOverlay() {
               has been taken. */}
           {(detail?.feeCents ?? 0) > 0 && (
             <Text style={[t.bodySm, { color: c.amberText, marginBottom: 10 }]}>
-              {feeLabel(detail!.feeCents)} per person, settled with the organiser directly.
+              {eventTakesPayment
+                ? `${feeLabel(detail!.feeCents)} per person, paid now and held by BOOK'D until the event.`
+                : `${feeLabel(detail!.feeCents)} per person, settled with the organiser directly.`}
             </Text>
           )}
+          {paying && (
+            <View style={{ marginBottom: 12 }}>
+              <CheckoutPanel onPaid={() => { setPaying(false); void s.toggleGoing(ev.id); }} />
+            </View>
+          )}
+          {rsvpError && <Text accessibilityRole="alert" style={[t.bodySm, { color: c.danger, marginBottom: 10 }]}>{rsvpError}</Text>}
           <Button
             label={going ? "You're going" : (detail?.feeCents ?? 0) > 0 ? `I'm going · ${feeLabel(detail!.feeCents)}` : "I'm going"}
             icon={going ? 'check' : 'user-plus'}
@@ -145,7 +160,14 @@ export function EventDetailOverlay() {
             accessibilityLabel={going
               ? `You are going to ${ev.title}. Press to change your mind.`
               : `Say you are going to ${ev.title}`}
-            onPress={() => (going ? setWithdrawing(true) : s.toggleGoing(ev.id))}
+            onPress={() => {
+              if (going) { setWithdrawing(true); return; }
+              if (!eventTakesPayment) { void s.toggleGoing(ev.id); return; }
+              setRsvpError(null);
+              void rsvpToEvent(ev.id, true)
+                .then((outcome) => { if (outcome.payment === 'pending') setPaying(true); })
+                .catch((e) => setRsvpError(e instanceof Error ? e.message : 'Could not save your RSVP.'));
+            }}
           />
           {/* Only withdrawing asks. Saying yes to an event is yours alone to
               undo, but taking the place back reaches the organiser's headcount

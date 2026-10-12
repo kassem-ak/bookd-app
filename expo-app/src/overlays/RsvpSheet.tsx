@@ -133,6 +133,7 @@ export function RsvpSheet() {
   const [booked, setBooked] = useState(false);
   const paymentConfig = usePaymentConfig();
   const [paid, setPaid] = useState(false);
+  const [noPayment, setNoPayment] = useState(false);
   const takesPayment = paymentsOn(paymentConfig, perHour ? 'court' : 'tournament');
   const confirm = () => {
     void s.confirmRsvp().then((ok) => { if (ok) setBooked(true); });
@@ -142,9 +143,19 @@ export function RsvpSheet() {
 
   if (booked && takesPayment && !paid) {
     return (
-      <Sheet title="Pay to confirm" subtitle={venue ? venue.name : ''} onClose={close}>
+      <Sheet
+        title="Pay to confirm"
+        subtitle={venue ? venue.name : ''}
+        onClose={close}
+        footer={noPayment ? <VoltButton label="Done" icon="check" onPress={close} /> : undefined}
+      >
         <View style={{ padding: 16 }}>
-          <CheckoutPanel onPaid={() => setPaid(true)} />
+          {noPayment && (
+            <Text style={[t.body, { color: c.txt2 }]}>
+              Nothing is waiting for payment. Check your bookings.
+            </Text>
+          )}
+          <CheckoutPanel onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} />
         </View>
       </Sheet>
     );

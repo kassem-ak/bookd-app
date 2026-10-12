@@ -106,7 +106,9 @@ export function EventDetailOverlay() {
   const eventTakesPayment = paymentsOn(paymentConfig, 'event') && (detail?.feeCents ?? 0) > 0;
   const [paying, setPaying] = useState(false);
   const [rsvpError, setRsvpError] = useState<string | null>(null);
+  const [rsvpBusy, setRsvpBusy] = useState(false);
   const evId = ev?.id ?? null;
+  useEffect(() => { setPaying(false); setRsvpError(null); setRsvpBusy(false); }, [evId]);
   useEffect(() => {
     if (!evId) { setDetail(null); setPhotos([]); return; }
     let active = true;
@@ -147,7 +149,10 @@ export function EventDetailOverlay() {
           )}
           {paying && (
             <View style={{ marginBottom: 12 }}>
-              <CheckoutPanel onPaid={() => { setPaying(false); void s.toggleGoing(ev.id); }} />
+              <CheckoutPanel
+                onPaid={() => { setPaying(false); void s.toggleGoing(ev.id); }}
+                onNone={() => { setPaying(false); setRsvpError('Your place was released. Try again.'); }}
+              />
             </View>
           )}
           {rsvpError && <Text accessibilityRole="alert" style={[t.bodySm, { color: c.danger, marginBottom: 10 }]}>{rsvpError}</Text>}
@@ -157,6 +162,7 @@ export function EventDetailOverlay() {
             tone={going ? 'secondary' : 'primary'}
             full
             height={52}
+            enabled={!rsvpBusy}
             accessibilityLabel={going
               ? `You are going to ${ev.title}. Press to change your mind.`
               : `Say you are going to ${ev.title}`}
@@ -164,9 +170,14 @@ export function EventDetailOverlay() {
               if (going) { setWithdrawing(true); return; }
               if (!eventTakesPayment) { void s.toggleGoing(ev.id); return; }
               setRsvpError(null);
+              setRsvpBusy(true);
               void rsvpToEvent(ev.id, true)
-                .then((outcome) => { if (outcome.payment === 'pending') setPaying(true); })
-                .catch((e) => setRsvpError(e instanceof Error ? e.message : 'Could not save your RSVP.'));
+                .then((outcome) => {
+                  if (outcome.payment === 'pending') setPaying(true);
+                  else void s.toggleGoing(ev.id);
+                })
+                .catch((e) => setRsvpError(e instanceof Error ? e.message : 'Could not save your RSVP.'))
+                .finally(() => setRsvpBusy(false));
             }}
           />
           {/* Only withdrawing asks. Saying yes to an event is yours alone to

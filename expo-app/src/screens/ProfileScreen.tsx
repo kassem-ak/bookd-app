@@ -235,6 +235,13 @@ export function ProfileScreen() {
           body="Money from sessions, courts and events you run"
           onPress={() => s.set('overlay', 'earnings')}
         />
+        <RowDivider />
+        <GroupRow
+          icon="file-text"
+          title="Payments"
+          body="What you paid, receipts and refunds"
+          onPress={() => s.set('overlay', 'paymentHistory')}
+        />
       </Card>
 
       {/* ---------------------------- SETTINGS ---------------------------- */}

@@ -11,6 +11,7 @@ import { CoachDayViewOverlay } from '../overlays/CoachDayViewOverlay';
 import { PersonOverlay } from '../overlays/PersonOverlay';
 import { BookingOverlay } from '../overlays/BookingOverlay';
 import { EarningsOverlay } from '../overlays/EarningsOverlay';
+import { PaymentHistoryOverlay } from '../overlays/PaymentHistoryOverlay';
 import { BookingsOverlay } from '../overlays/BookingsOverlay';
 import {
   CommunityDetailOverlay,
@@ -106,6 +107,8 @@ export function OverlayRouter({ id }: { id: string }) {
       return <PaymentMethodsOverlay />;
     case 'earnings':
       return <EarningsOverlay />;
+    case 'paymentHistory':
+      return <PaymentHistoryOverlay />;
     default:
       return null;
   }

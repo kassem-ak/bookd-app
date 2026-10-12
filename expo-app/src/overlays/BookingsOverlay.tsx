@@ -38,6 +38,8 @@ import {
   hasFulfilledSession, PackageCancellation, PackageProgress,
   progressSummary, requestCancellation, suggestedRefundCents, withdrawCancellation,
 } from '../lib/packages';
+import { usePaymentConfig } from '../components/usePaymentConfig';
+import { paymentsOn } from '../lib/payments';
 import { initials } from '../state/models';
 import { errorMessage, useStore } from '../state/store';
 import { alpha, useTheme } from '../theme';
@@ -952,6 +954,11 @@ function SessionCard({
   onConfirmDone?: () => void;
 }) {
   const { c, t } = useTheme();
+  const s = useStore();
+  const config = usePaymentConfig();
+  // With payments on, a pending coach session is one the booker has not paid
+  // for; with them off it is one the coach has not answered.
+  const payNow = booking.status === 'pending' && booking.kind === 'coach' && paymentsOn(config, 'session');
   const badge = statusTint(booking.status, c);
   const kind = kindTint(booking.kind, c);
   const when = formatSessionWhen(booking);
@@ -987,7 +994,14 @@ function SessionCard({
         </View>
         <Row gap={6}>
           <MicroBadge label={kind.label} bg={kind.bg} fg={kind.fg} />
-          <MicroBadge label={bookingStatusLabel(booking.status)} bg={badge.bg} fg={badge.fg} />
+          {payNow ? (
+            <Pressable onPress={() => s.set('overlay', 'paymentHistory')} accessibilityRole="button"
+              accessibilityLabel="Awaiting payment. Open payments to pay.">
+              <MicroBadge label="Awaiting payment" bg={badge.bg} fg={badge.fg} />
+            </Pressable>
+          ) : (
+            <MicroBadge label={bookingStatusLabel(booking.status)} bg={badge.bg} fg={badge.fg} />
+          )}
         </Row>
       </Row>
 

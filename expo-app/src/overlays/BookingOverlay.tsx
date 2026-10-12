@@ -571,7 +571,9 @@ export function BookingOverlay() {
         >
           <Text style={[t.bodySm, { color: c.txt2 }]}>
             {p.name.split(' ')[0]} decides whether to cancel it and how much to give back — you can settle on a figure
-            between you. BOOK’D records what you agree; it does not move money.
+            between you. {paymentsOn(paymentConfig, 'package')
+              ? 'Once you both agree, BOOK’D sends the refund back to the card or Whish account that paid.'
+              : 'BOOK’D records what you agree; it does not move money.'}
           </Text>
           <Text style={[t.caption, { color: c.txt3 }]}>
             Sessions you have already booked stay in your calendar. Cancel those separately if you do not want them.

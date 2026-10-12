@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { formatCents } from '../lib/bookings';
 import {
@@ -7,7 +7,7 @@ import {
 import { useTheme } from '../theme';
 import { AddPaymentMethod } from './AddPaymentMethod';
 import { PracticeBanner } from './PracticeBanner';
-import { Button, Chip, Field, Row, VoltButton } from './ui';
+import { Button, Chip, ErrorNote, Field, Row, VoltButton } from './ui';
 
 /** The ways to pay, as chips. Kept separate so another option (a wallet) is one more chip here. */
 function PayOptions({ methods, chosen, onChoose }: {
@@ -25,7 +25,12 @@ function PayOptions({ methods, chosen, onChoose }: {
 /** Pay for what was just booked. The booking is held as pending until this
  *  succeeds and is released automatically if it does not within the checkout
  *  time, so leaving this screen never leaves a half-paid booking behind. */
-export function CheckoutPanel({ onPaid }: { onPaid: () => void }) {
+export function CheckoutPanel({ onPaid, onNone }: {
+  /** Called with the total that was charged; 0 means it was confirmed for free. */
+  onPaid: (totalCents: number) => void;
+  /** Called when there is nothing awaiting payment (already paid, or released). */
+  onNone?: () => void;
+}) {
   const { c, t } = useTheme();
   const [payment, setPayment] = useState<MyPayment | null | undefined>(undefined);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -34,29 +39,44 @@ export function CheckoutPanel({ onPaid }: { onPaid: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const onNoneRef = useRef(onNone);
+  onNoneRef.current = onNone;
 
   const load = useCallback(async () => {
     const [p, m] = await Promise.all([fetchAwaitingPayment(), listPaymentMethods()]);
     const payable = m.filter((x) => x.canPay);
     setPayment(p);
+    if (!p) onNoneRef.current?.();
     setMethods(payable);
     setChosen((current) => current ?? payable.find((x) => x.defaultPay)?.id ?? payable[0]?.id ?? null);
   }, []);
-  useEffect(() => { void load().catch(() => setPayment(null)); }, [load]);
+  const first = useCallback(() => {
+    setLoadFailed(false);
+    load().catch(() => setLoadFailed(true));
+  }, [load]);
+  useEffect(() => { first(); }, [first]);
+  // Re-read the clock so the countdown caption ticks; never used to disable paying.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
+  if (loadFailed && !payment) return <ErrorNote message="Could not load your payment." onRetry={first} />;
   if (payment === undefined) return <ActivityIndicator color={c.accent} style={{ marginVertical: 24 }} />;
   if (payment === null) return null;
 
   const total = payment.priceCents + payment.feeCents;
   const free = total === 0;
-  const minutesLeft = Math.max(0, Math.ceil((Date.parse(payment.expiresAt) - Date.now()) / 60000));
+  const minutesLeft = Math.max(0, Math.ceil((Date.parse(payment.expiresAt) - now) / 60000));
   const pay = async () => {
     if (!free && !chosen) return;
     setBusy(true); setMessage(null);
     try {
       // A free total is confirmed without a method; the server ignores it.
       const result = await payFor(payment.id, free ? '' : chosen!);
-      if (result.ok) onPaid();
+      if (result.ok) onPaid(total);
       else setMessage(result.message);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'The payment did not go through.');
@@ -109,7 +129,10 @@ export function CheckoutPanel({ onPaid }: { onPaid: () => void }) {
       )}
       <Text style={[t.caption, { color: c.txt3 }]}>
         The money is held by BOOK'D until the session is done. Cancel before then and the price comes back to you;
-        the payment fee does not. Finish within {minutesLeft} min or the slot is released.
+        the payment fee does not.{' '}
+        {minutesLeft > 0
+          ? `Finish within ${minutesLeft} min or the slot is released.`
+          : 'This checkout may have expired. If paying fails, book again.'}
       </Text>
       {free ? null : methods.length > 0 ? (
         <PayOptions methods={methods} chosen={chosen} onChoose={setChosen} />
@@ -119,7 +142,7 @@ export function CheckoutPanel({ onPaid }: { onPaid: () => void }) {
       {message && <Text accessibilityRole="alert" style={[t.bodySm, { color: c.danger }]}>{message}</Text>}
       <VoltButton
         label={free ? 'Confirm for free' : `Pay ${formatCents(total)}`}
-        enabled={(free || Boolean(chosen)) && minutesLeft > 0}
+        enabled={free || Boolean(chosen)}
         busy={busy}
         busyLabel={free ? 'Confirming...' : 'Paying...'}
         onPress={() => void pay()}

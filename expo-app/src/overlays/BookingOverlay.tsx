@@ -144,6 +144,8 @@ export function BookingOverlay() {
   const [bookingQuote, setBookingQuote] = React.useState<{ redeeming: boolean; dueNow: number } | null>(null);
   const paymentConfig = usePaymentConfig();
   const [paid, setPaid] = React.useState(false);
+  // The total the panel charged (0 = confirmed free); null when nothing was paid here.
+  const [paidHere, setPaidHere] = React.useState<number | null>(null);
   const personId = p?.id;
   React.useEffect(() => {
     if (!personId) return;
@@ -341,14 +343,19 @@ export function BookingOverlay() {
         ? `$${dueNow}`
         : 'To agree';
 
+  const payStep = takesPayment && bookingQuote && !bookingQuote.redeeming && bookingQuote.dueNow > 0 && !paid;
+
   if (s.booked) {
     return (
-      <OverlayScaffold header={<OverlayHeader title="Booking confirmed" onBack={s.closeOverlay} />}>
+      <OverlayScaffold header={<OverlayHeader title={payStep ? 'Pay to confirm' : 'Booking confirmed'} onBack={s.closeOverlay} />}>
         <View style={{ paddingHorizontal: 18, alignItems: 'center', paddingTop: 60 }}>
-          {takesPayment && bookingQuote && !bookingQuote.redeeming && bookingQuote.dueNow > 0 && !paid ? (
+          {payStep ? (
             <View style={{ width: '100%' }}>
               <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>
-              <CheckoutPanel onPaid={() => setPaid(true)} />
+              <CheckoutPanel
+                onPaid={(total) => { setPaidHere(total); setPaid(true); }}
+                onNone={() => setPaid(true)}
+              />
             </View>
           ) : (
             <>
@@ -366,7 +373,11 @@ export function BookingOverlay() {
                     ? 'Covered by your pack — nothing extra to pay for this booking.'
                     : bookingQuote.dueNow > 0
                       ? takesPayment
-                        ? 'Paid. The money is held until the session is done.'
+                        ? paidHere === 0
+                          ? 'Confirmed — nothing to pay.'
+                          : paidHere !== null
+                            ? 'Paid. The money is held until the session is done.'
+                            : 'You can finish paying from Payments in your profile.'
                         : `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
                       : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
                 </Text>

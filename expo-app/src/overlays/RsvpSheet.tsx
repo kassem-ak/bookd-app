@@ -134,6 +134,7 @@ export function RsvpSheet() {
   const paymentConfig = usePaymentConfig();
   const [paid, setPaid] = useState(false);
   const [noPayment, setNoPayment] = useState(false);
+  const [found, setFound] = useState(false);
   const takesPayment = paymentsOn(paymentConfig, perHour ? 'court' : 'tournament');
   const confirm = () => {
     void s.confirmRsvp().then((ok) => { if (ok) setBooked(true); });
@@ -145,10 +146,10 @@ export function RsvpSheet() {
   // this reservation's open checkout and calls onNone when there is none.
   if (booked && !paid && !noPayment) {
     return (
-      <Sheet title="Pay to confirm" subtitle={venue ? venue.name : ''} onClose={close}>
+      <Sheet title={found ? 'Pay to confirm' : 'Confirming…'} subtitle={venue ? venue.name : ''} onClose={close}>
         <View style={{ padding: 16 }}>
           <CheckoutPanel subjectId={s.rsvpBookedId ?? undefined}
-            onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} />
+            onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} onFound={() => setFound(true)} />
         </View>
       </Sheet>
     );

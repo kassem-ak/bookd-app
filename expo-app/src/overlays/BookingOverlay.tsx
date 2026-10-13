@@ -144,6 +144,8 @@ export function BookingOverlay() {
   const [bookingQuote, setBookingQuote] = React.useState<{ redeeming: boolean; dueNow: number } | null>(null);
   const paymentConfig = usePaymentConfig();
   const [paid, setPaid] = React.useState(false);
+  // False until the checkout panel finds a payment: with payments off there is none, so no pay step flashes.
+  const [found, setFound] = React.useState(false);
   // The total the panel charged (0 = confirmed free); null when nothing was paid here.
   const [paidHere, setPaidHere] = React.useState<number | null>(null);
   // A pack booked several at a time: the server returns a count, not the
@@ -152,7 +154,7 @@ export function BookingOverlay() {
   const checkoutSubject = bookedMany ? undefined : s.bookedId ?? undefined;
   const personId = p?.id;
   // A new booking (another coach, or booking again) starts unpaid.
-  React.useEffect(() => { setPaid(false); setPaidHere(null); }, [personId, s.booked]);
+  React.useEffect(() => { setPaid(false); setFound(false); setPaidHere(null); }, [personId, s.booked]);
   React.useEffect(() => {
     if (!personId) return;
     let live = true;
@@ -291,7 +293,8 @@ export function BookingOverlay() {
       setBookingQuote({ redeeming, dueNow });
       setBookedMany(true);
       setChosenSlots({});
-      useStore.getState().set('booked', true);
+      // bookedId null: the panel must not load a stale single-booking subject.
+      useStore.setState({ booked: true, bookedId: null });
     } catch (error) {
       track('booking_failed', { error_code: analyticsErrorCode(error) });
       setBookingError(errorMessage(error));
@@ -356,15 +359,16 @@ export function BookingOverlay() {
 
   if (s.booked) {
     return (
-      <OverlayScaffold header={<OverlayHeader title={payStep ? 'Pay to confirm' : 'Booking confirmed'} onBack={s.closeOverlay} />}>
+      <OverlayScaffold header={<OverlayHeader title={payStep ? (found ? 'Pay to confirm' : 'Confirming…') : 'Booking confirmed'} onBack={s.closeOverlay} />}>
         <View style={{ paddingHorizontal: 18, alignItems: 'center', paddingTop: 60 }}>
           {payStep ? (
             <View style={{ width: '100%' }}>
-              <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>
+              {found && <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>}
               <CheckoutPanel
                 subjectId={checkoutSubject}
                 onPaid={(total) => { setPaidHere(total); setPaid(true); }}
                 onNone={() => setPaid(true)}
+                onFound={() => setFound(true)}
               />
             </View>
           ) : (

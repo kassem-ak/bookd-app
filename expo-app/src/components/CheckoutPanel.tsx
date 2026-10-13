@@ -25,13 +25,15 @@ function PayOptions({ methods, chosen, onChoose }: {
 /** Pay for what was just booked. The booking is held as pending until this
  *  succeeds and is released automatically if it does not within the checkout
  *  time, so leaving this screen never leaves a half-paid booking behind. */
-export function CheckoutPanel({ subjectId, onPaid, onNone }: {
+export function CheckoutPanel({ subjectId, onPaid, onNone, onFound }: {
   /** The booking, reservation or event being paid for; without it, the newest open checkout. */
   subjectId?: string;
   /** Called with the total that was charged; 0 means it was confirmed for free. */
   onPaid: (totalCents: number) => void;
   /** Called when there is nothing awaiting payment (already paid, or released). */
   onNone?: () => void;
+  /** Called once, the first time a payment is loaded. */
+  onFound?: () => void;
 }) {
   const { c, t } = useTheme();
   const [payment, setPayment] = useState<MyPayment | null | undefined>(undefined);
@@ -45,12 +47,16 @@ export function CheckoutPanel({ subjectId, onPaid, onNone }: {
   const [now, setNow] = useState(() => Date.now());
   const onNoneRef = useRef(onNone);
   onNoneRef.current = onNone;
+  const onFoundRef = useRef(onFound);
+  onFoundRef.current = onFound;
+  const foundRef = useRef(false);
 
   const load = useCallback(async () => {
     const [p, m] = await Promise.all([fetchAwaitingPayment(subjectId), listPaymentMethods()]);
     const payable = m.filter((x) => x.canPay);
     setPayment(p);
     if (!p) onNoneRef.current?.();
+    else if (!foundRef.current) { foundRef.current = true; onFoundRef.current?.(); }
     setMethods(payable);
     setChosen((current) => current ?? payable.find((x) => x.defaultPay)?.id ?? payable[0]?.id ?? null);
   }, [subjectId]);

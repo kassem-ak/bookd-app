@@ -327,5 +327,61 @@ begin
     end if;
   end;
 
+  -- 24. A ledger entry posted in practice mode is stamped 'test'.
+  declare v_e uuid;
+  begin
+    reset role;
+    update payment_settings set mode = 'test', provider = 'test';
+    v_e := private.post_entry('adjustment', 'zz_mode:' || gen_random_uuid(), 'test', null, jsonb_build_array(
+      jsonb_build_object('account', 'held', 'amount', 1),
+      jsonb_build_object('account', 'commission_revenue', 'amount', -1)));
+    if (select mode from ledger_entries where id = v_e) is distinct from 'test' then
+      raise exception 'FAIL 24: practice entry stamped %', (select mode from ledger_entries where id = v_e);
+    end if;
+    set local role service_role;
+  end;
+
+  -- 25. A paid court reservation that ended two hours ago is completed by the tick and released.
+  declare v_venue uuid; v_court uuid; v_res uuid; v_p uuid;
+  begin
+    set local role service_role;
+    update payment_settings set enabled_kinds = array['court','event'];
+    insert into venues (slug, name, city, sport, status, equipment_cents_per_hour, timezone, opens_at, closes_at, owner_id)
+    values ('zz-core-venue', 'ZZ Core Venue', 'Beirut', 'Paddle', 'open', 0, 'UTC', '00:00', '23:59', v_other) returning id into v_venue;
+    insert into courts (venue_id, name, price_cents_per_hour, active) values (v_venue, 'ZZ CORE COURT', 3000, true) returning id into v_court;
+    insert into court_reservations (client_id, court_id, starts_at, hours, ends_at, price_cents_per_hour, total_cents)
+    values (v_me, v_court, now() - interval '3 hours', 1, now() - interval '2 hours', 3000, 3000) returning id into v_res;
+    select id into v_p from payments where kind = 'court' and subject_id = v_res;
+    if v_p is null then raise exception 'FAIL 25: no court payment opened'; end if;
+    perform payments_begin_charge(v_p);
+    perform payments_mark_held(v_p, 'zz_core_25', 0, null);
+    if (select status from court_reservations where id = v_res) <> 'confirmed' then raise exception 'FAIL 25b: reservation not confirmed'; end if;
+    perform private.payments_tick();
+    if (select status from court_reservations where id = v_res) <> 'completed' then raise exception 'FAIL 25c: tick did not complete the reservation'; end if;
+    if not exists (select 1 from payment_releases where payment_id = v_p and subject_id = v_res) then raise exception 'FAIL 25d: no release for the completed reservation'; end if;
+  end;
+
+  -- 26. A held event payment whose event started two days ago gets a release from the tick.
+  declare v_comm uuid; v_ev uuid; v_p uuid;
+  begin
+    set local role service_role;
+    insert into communities (slug, name, code) values ('zz-core-comm', 'ZZ Core Comm', 'ZZCORE') returning id into v_comm;
+    insert into community_members (community_id, user_id, role) values (v_comm, v_other, 'owner')
+      on conflict (community_id, user_id) do update set role = 'owner';
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ core event', 1500, v_other, now() - interval '2 days') returning id into v_ev;
+    insert into event_attendees (event_id, user_id, payment, fee_cents) values (v_ev, v_me, 'pending', 1500);
+    select id into v_p from payments where kind = 'event' and subject_id = v_ev and payer_id = v_me;
+    if v_p is null then raise exception 'FAIL 26: no event payment opened'; end if;
+    perform payments_begin_charge(v_p);
+    perform payments_mark_held(v_p, 'zz_core_26', 0, null);
+    if (select status from payments where id = v_p) <> 'held' then raise exception 'FAIL 26b: event payment is %', (select status from payments where id = v_p); end if;
+    perform private.payments_tick();
+    if not exists (select 1 from payment_releases where payment_id = v_p and subject_id = v_ev) then
+      raise exception 'FAIL 26c: tick did not release the started event';
+    end if;
+    update payment_settings set enabled_kinds = '{}';
+  end;
+
   raise exception 'ALL PAYMENTS CORE CHECKS PASSED';
 end $$;

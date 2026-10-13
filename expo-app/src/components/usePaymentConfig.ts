@@ -9,7 +9,11 @@ export function usePaymentConfig(): PaymentConfig {
   const [config, setConfig] = useState<PaymentConfig>(NO_PAYMENTS);
   useEffect(() => {
     let live = true;
-    pending ??= fetchPaymentConfig().catch(() => NO_PAYMENTS);
+    // A failed read comes back as NO_PAYMENTS: forget it so the next mount asks again.
+    pending ??= fetchPaymentConfig().catch(() => NO_PAYMENTS).then((value) => {
+      if (value === NO_PAYMENTS) pending = null;
+      return value;
+    });
     void pending.then((value) => { if (live) setConfig(value); });
     return () => { live = false; };
   }, []);

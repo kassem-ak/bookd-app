@@ -264,6 +264,8 @@ export interface SpotterState {
   rsvpHours: number;
   rsvpGear: boolean;
   rsvpCoach: boolean;
+  /** The reservation or entry the last confirmRsvp created, so its checkout can be found by id. */
+  rsvpBookedId: string | null;
 
   // --- shared registration form: community | venue | shop ---
   regKind: string;
@@ -314,6 +316,8 @@ export interface SpotterState {
   bookSlot: string | null;
   bookPkg: number;
   booked: boolean;
+  /** The booking the last confirmBooking created, so its checkout can be found by id. */
+  bookedId: string | null;
 
   // prefs
   notifSeen: boolean;
@@ -541,6 +545,7 @@ export const useStore = create<SpotterState>((set, get) => ({
   rsvpHours: 1,
   rsvpGear: false,
   rsvpCoach: false,
+  rsvpBookedId: null,
 
   regKind: 'community',
   pendingRegistrations: [],
@@ -571,6 +576,7 @@ export const useStore = create<SpotterState>((set, get) => ({
   bookSlot: null,
   bookPkg: 0,
   booked: false,
+  bookedId: null,
   bookingChange: false,
 
   notifSeen: false,
@@ -1091,14 +1097,14 @@ export const useStore = create<SpotterState>((set, get) => ({
     const pkg = coachPackageOptions(person)[s.bookPkg] ?? coachPackageOptions(person)[0];
     set({ writeBusy: 'booking', writeError: null });
     try {
-      await createBookingRemote(
+      const bookedId = await createBookingRemote(
         { id: person.id, name: person.name },
         scheduledFor(bookDate, bookSlot),
         `${pkg.name} - ${bookingDayLabel(bookDate)} - ${bookSlot}`,
         pkg.packageId,
         bookSlot,
       );
-      set({ booked: true, writeBusy: null });
+      set({ booked: true, bookedId: bookedId ?? null, writeBusy: null });
     } catch (error) {
       track('booking_failed', { error_code: analyticsErrorCode(error) });
       set(errorState(error));
@@ -1197,10 +1203,11 @@ export const useStore = create<SpotterState>((set, get) => ({
       return false;
     }
 
-    set({ writeBusy: 'rsvp', writeError: null });
+    set({ writeBusy: 'rsvp', writeError: null, rsvpBookedId: null });
+    let bookedId: string | null = null;
     try {
       if (subject.perHour && subject.court) {
-        await reserveCourt({
+        bookedId = await reserveCourt({
           courtId: subject.court.id,
           startsAt: st.rsvpStartsAt as string,
           hours: st.rsvpHours,
@@ -1208,7 +1215,7 @@ export const useStore = create<SpotterState>((set, get) => ({
           equipment: st.rsvpGear,
         });
       } else if (subject.event) {
-        await enterVenueEvent(subject.event.id);
+        bookedId = await enterVenueEvent(subject.event.id);
       } else {
         throw new Error('That slot is unavailable right now.');
       }
@@ -1222,7 +1229,7 @@ export const useStore = create<SpotterState>((set, get) => ({
     // The sheet is left open on purpose: it swaps to a receipt naming what was
     // booked. Closing here is what made a successful reservation indis-
     // tinguishable from a dismissed one.
-    set({ writeBusy: null });
+    set({ writeBusy: null, rsvpBookedId: bookedId ?? null });
     await get().refreshCourtReservations();
     // "Add a coach" routes into the coach calendar; go through openBooking so a
     // previous confirmation screen is cleared first.

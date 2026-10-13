@@ -33,6 +33,8 @@ export type EventDetail = {
   invitePolicy: InvitePolicy;
   feeCents: number;
   attendeesCount: number;
+  /** When it starts, if set; leaving is refused once it has. */
+  startsAt: string | null;
 };
 
 export type EventPhoto = {
@@ -67,9 +69,9 @@ export const INVITE_CHOICES: { key: InvitePolicy; label: string; blurb: string }
   { key: 'members', label: 'Any member', blurb: 'Anyone in the community can invite anyone on the app.' },
 ];
 
-const FULL = 'id, community_id, type, title, when_label, location, attendees_count, '
+const FULL = 'id, community_id, type, title, starts_at, when_label, location, attendees_count, '
   + 'description, cover_url, privacy, invite_policy, fee_cents';
-const BASE = 'id, community_id, type, title, when_label, location, attendees_count';
+const BASE = 'id, community_id, type, title, starts_at, when_label, location, attendees_count';
 
 function detailFrom(row: Record<string, unknown>): EventDetail {
   return {
@@ -87,6 +89,7 @@ function detailFrom(row: Record<string, unknown>): EventDetail {
     invitePolicy: (row.invite_policy as InvitePolicy) ?? 'managers',
     feeCents: (row.fee_cents as number) ?? 0,
     attendeesCount: (row.attendees_count as number) ?? 0,
+    startsAt: (row.starts_at as string) ?? null,
   };
 }
 

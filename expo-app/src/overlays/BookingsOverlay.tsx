@@ -428,8 +428,8 @@ export function BookingsOverlay() {
             const pack = givingBack;
             if (!pack) return;
             void run(async () => {
-              const refundCents = await cancelUnusedPackage(pack.coachId, pack.packageId);
-              setRefundNote(takesPayment && refundCents > 0
+              const { refundCents, moved } = await cancelUnusedPackage(pack.coachId, pack.packageId);
+              setRefundNote(moved && refundCents > 0
                 ? `${formatCents(refundCents)} is on its way back to the card or Whish account that paid.` : null);
               track('package_cancelled_unused');
               setGivingBack(null);
@@ -583,7 +583,7 @@ function MonthCalendar({ sessions, confirmingId, cancellingId, onCancel, onKeep,
               <SessionCard key={session.id} booking={session}
                 confirming={confirmingId === session.id}
                 busy={cancellingId === session.id}
-                onAskCancel={canCancel(session.status) ? () => onCancel(session) : undefined}
+                onAskCancel={canCancel(session.status, session.scheduledFor) ? () => onCancel(session) : undefined}
                 onKeep={onKeep}
                 onConfirmCancel={() => onConfirmCancel(session)} />
             ))}
@@ -978,7 +978,7 @@ function SessionCard({
   const badge = statusTint(booking.status, c);
   const kind = kindTint(booking.kind, c);
   const when = formatSessionWhen(booking);
-  const cancellable = Boolean(onAskCancel) && canCancel(booking.status);
+  const cancellable = Boolean(onAskCancel) && canCancel(booking.status, booking.scheduledFor);
   // One two-step confirm serves two different decisions: dropping a session
   // you already have, and turning down one somebody just asked you for. The
   // mechanism underneath is the same call, but the person reading it pressed

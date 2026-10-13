@@ -141,21 +141,14 @@ export function RsvpSheet() {
 
   const canConfirm = Boolean(subject) && (!perHour || Boolean(s.rsvpStartsAt));
 
-  if (booked && takesPayment && !paid) {
+  // The server decides whether there is anything to pay: the panel looks for
+  // this reservation's open checkout and calls onNone when there is none.
+  if (booked && !paid && !noPayment) {
     return (
-      <Sheet
-        title="Pay to confirm"
-        subtitle={venue ? venue.name : ''}
-        onClose={close}
-        footer={noPayment ? <VoltButton label="Done" icon="check" onPress={close} /> : undefined}
-      >
+      <Sheet title="Pay to confirm" subtitle={venue ? venue.name : ''} onClose={close}>
         <View style={{ padding: 16 }}>
-          {noPayment && (
-            <Text style={[t.body, { color: c.txt2 }]}>
-              Nothing is waiting for payment. Check your bookings.
-            </Text>
-          )}
-          <CheckoutPanel onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} />
+          <CheckoutPanel subjectId={s.rsvpBookedId ?? undefined}
+            onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} />
         </View>
       </Sheet>
     );
@@ -182,7 +175,9 @@ export function RsvpSheet() {
           )}
           <Text style={[t.price, { color: c.accent }]}>{formatCents(total)}</Text>
           <Text style={[t.caption, { color: c.txt3 }]}>
-            It is in My bookings now. The venue is paid at the door — BOOK’D does not move money.
+            {paid
+              ? 'It is in My bookings now. Paid — BOOK’D holds the money until it is done.'
+              : 'It is in My bookings now. The venue is paid at the door — BOOK’D does not move money.'}
           </Text>
         </View>
       </Sheet>

@@ -10,7 +10,7 @@ import { useTheme } from '../theme';
 
 const PAYOUT_LABEL: Record<Payout['status'], string> = {
   waiting_method: 'Waiting for your Whish account',
-  queued: 'Sending', sending: 'Sending', sent: 'Sent', failed: 'Failed — BOOK\'D will retry',
+  queued: 'Sending', sending: 'Sending', sent: 'Sent', failed: 'Failed — BOOK\'D will look into it',
 };
 
 export function EarningsOverlay() {

@@ -277,7 +277,7 @@ function offersHarness(rows) {
       const target = new URL(url);
       calls.push({ method: init?.method ?? 'GET', path: target.pathname, query: target.search,
         body: init?.body ? JSON.parse(init.body) : null });
-      if (target.pathname.endsWith('/package_refund_offers')) {
+      if (target.pathname.endsWith('/package_refund_offers') || target.pathname.endsWith('/rpc/cancel_unused_package')) {
         return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -402,6 +402,14 @@ test('giving back an unused pack names the coach and the package, nothing else',
   // No amount is sent: the price is the coach's, and a client that could name
   // its own refund would be naming it.
   assert.equal(JSON.stringify(rpc.body), JSON.stringify({ p_coach: COACH, p_package: 'pk1' }));
+});
+
+test('giving back an unused pack says whether held money moved', async () => {
+  const paid = await offersHarness([{ id: 'c1', refund_cents: 20000, moved: true }]).module.cancelUnusedPackage(COACH, 'pk1');
+  assert.deepEqual({ ...paid }, { refundCents: 20000, moved: true });
+  // Bought before payments: the coach pays it back directly, nothing moves.
+  const direct = await offersHarness([{ id: 'c2', refund_cents: 20000, moved: false }]).module.cancelUnusedPackage(COACH, 'pk1');
+  assert.deepEqual({ ...direct }, { refundCents: 20000, moved: false });
 });
 
 // ---- taking a request back --------------------------------------------------

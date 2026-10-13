@@ -139,7 +139,9 @@ export function bookingStatusLabel(status: BookingStatus) {
 
 // `guard_booking_status_transition` lets a client move only pending/confirmed
 // to cancelled, so the button must not be offered anywhere else.
-export function canCancel(status: BookingStatus) {
+/** Pending or confirmed, and not yet started: the server refuses a cancel once it has. */
+export function canCancel(status: BookingStatus, scheduledFor?: string | null, now = Date.now()) {
+  if (scheduledFor && Date.parse(scheduledFor) <= now) return false;
   return status === 'pending' || status === 'confirmed';
 }
 

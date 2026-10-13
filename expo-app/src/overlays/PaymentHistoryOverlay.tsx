@@ -44,7 +44,8 @@ export function PaymentHistoryOverlay() {
     finally { setBusy(false); }
   };
 
-  const awaiting = rows?.find((p) => p.status === 'awaiting_payment');
+  // Mine to pay: a payee also sees the checkouts others have open with them.
+  const awaiting = rows?.find((p) => p.status === 'awaiting_payment' && p.role === 'payer');
 
   return (
     <OverlayScaffold header={<OverlayHeader title="Payments" onBack={s.closeOverlay} />}>
@@ -54,7 +55,7 @@ export function PaymentHistoryOverlay() {
         {awaiting && (
           <Card style={{ padding: 14, gap: 8 }}>
             <Text style={[t.bodyLg, { color: c.txt }]}>Finish paying · {KIND_LABEL[awaiting.kind]}</Text>
-            <CheckoutPanel onPaid={() => void load()} onNone={() => void load()} />
+            <CheckoutPanel subjectId={awaiting.subjectId} onPaid={() => void load()} onNone={() => void load()} />
           </Card>
         )}
         {rows?.length === 0 && <Text style={[t.body, { color: c.txt3 }]}>No payments yet.</Text>}

@@ -25,7 +25,9 @@ function PayOptions({ methods, chosen, onChoose }: {
 /** Pay for what was just booked. The booking is held as pending until this
  *  succeeds and is released automatically if it does not within the checkout
  *  time, so leaving this screen never leaves a half-paid booking behind. */
-export function CheckoutPanel({ onPaid, onNone }: {
+export function CheckoutPanel({ subjectId, onPaid, onNone }: {
+  /** The booking, reservation or event being paid for; without it, the newest open checkout. */
+  subjectId?: string;
   /** Called with the total that was charged; 0 means it was confirmed for free. */
   onPaid: (totalCents: number) => void;
   /** Called when there is nothing awaiting payment (already paid, or released). */
@@ -45,13 +47,13 @@ export function CheckoutPanel({ onPaid, onNone }: {
   onNoneRef.current = onNone;
 
   const load = useCallback(async () => {
-    const [p, m] = await Promise.all([fetchAwaitingPayment(), listPaymentMethods()]);
+    const [p, m] = await Promise.all([fetchAwaitingPayment(subjectId), listPaymentMethods()]);
     const payable = m.filter((x) => x.canPay);
     setPayment(p);
     if (!p) onNoneRef.current?.();
     setMethods(payable);
     setChosen((current) => current ?? payable.find((x) => x.defaultPay)?.id ?? payable[0]?.id ?? null);
-  }, []);
+  }, [subjectId]);
   const first = useCallback(() => {
     setLoadFailed(false);
     load().catch(() => setLoadFailed(true));
@@ -96,7 +98,8 @@ export function CheckoutPanel({ onPaid, onNone }: {
       <PracticeBanner />
       <Row style={{ justifyContent: 'space-between' }}>
         <Text style={[t.body, { color: c.txt2 }]}>Price</Text>
-        <Text style={[t.body, { color: c.txt }]}>{formatCents(payment.priceCents)}</Text>
+        {/* priceCents is after the discount; the list price is shown, then the discount line. */}
+        <Text style={[t.body, { color: c.txt }]}>{formatCents(payment.priceCents + payment.discountCents)}</Text>
       </Row>
       {payment.discountCents > 0 && (
         <Row style={{ justifyContent: 'space-between' }}>
@@ -128,7 +131,7 @@ export function CheckoutPanel({ onPaid, onNone }: {
         </Row>
       )}
       <Text style={[t.caption, { color: c.txt3 }]}>
-        The money is held by BOOK'D until the session is done. Cancel before then and the price comes back to you;
+        The money is held by BOOK'D until the booking is done. Cancel before then and the price comes back to you;
         the payment fee does not.{' '}
         {minutesLeft > 0
           ? `Finish within ${minutesLeft} min or the slot is released.`

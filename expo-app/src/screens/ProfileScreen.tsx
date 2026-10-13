@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Avatar, Card, ConfirmSheet, Icon, IconButton, MicroBadge, Row, SectionHeading, Toggle } from '../components/ui';
+import { usePaymentConfig } from '../components/usePaymentConfig';
 import { fetchMyBookings } from '../lib/bookings';
 import { stopCoaching } from '../lib/coaching';
 import { signOutUser } from '../lib/session';
@@ -13,6 +14,8 @@ import { alpha, radii, useTheme } from '../theme';
 export function ProfileScreen() {
   const { c, t } = useTheme();
   const s = useStore();
+  // Payment rows only once BOOK'D takes payment for something.
+  const paymentsLive = usePaymentConfig().enabledKinds.length > 0;
   const role = s.role;
   // Coaching UI asks `isCoach`, never `role`: an admin who coaches is 'ADMIN'.
   const isCoach = s.isCoach;
@@ -221,27 +224,31 @@ export function ProfileScreen() {
           body="Booking updates"
           onPress={s.openNotifs}
         />
-        <RowDivider />
-        <GroupRow
-          icon="credit-card"
-          title="Payment methods"
-          body="Cards and Whish, to pay and to be paid"
-          onPress={() => s.set('overlay', 'paymentMethods')}
-        />
-        <RowDivider />
-        <GroupRow
-          icon="trending-up"
-          title="Earnings"
-          body="Money from sessions, courts and events you run"
-          onPress={() => s.set('overlay', 'earnings')}
-        />
-        <RowDivider />
-        <GroupRow
-          icon="file-text"
-          title="Payments"
-          body="What you paid, receipts and refunds"
-          onPress={() => s.set('overlay', 'paymentHistory')}
-        />
+        {paymentsLive && (
+          <>
+            <RowDivider />
+            <GroupRow
+              icon="credit-card"
+              title="Payment methods"
+              body="Cards and Whish, to pay and to be paid"
+              onPress={() => s.set('overlay', 'paymentMethods')}
+            />
+            <RowDivider />
+            <GroupRow
+              icon="trending-up"
+              title="Earnings"
+              body="Money from sessions, courts and events you run"
+              onPress={() => s.set('overlay', 'earnings')}
+            />
+            <RowDivider />
+            <GroupRow
+              icon="file-text"
+              title="Payments"
+              body="What you paid, receipts and refunds"
+              onPress={() => s.set('overlay', 'paymentHistory')}
+            />
+          </>
+        )}
       </Card>
 
       {/* ---------------------------- SETTINGS ---------------------------- */}

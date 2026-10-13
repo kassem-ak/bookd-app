@@ -146,7 +146,13 @@ export function BookingOverlay() {
   const [paid, setPaid] = React.useState(false);
   // The total the panel charged (0 = confirmed free); null when nothing was paid here.
   const [paidHere, setPaidHere] = React.useState<number | null>(null);
+  // A pack booked several at a time: the server returns a count, not the
+  // booking ids, so its checkout is found as the newest one instead.
+  const [bookedMany, setBookedMany] = React.useState(false);
+  const checkoutSubject = bookedMany ? undefined : s.bookedId ?? undefined;
   const personId = p?.id;
+  // A new booking (another coach, or booking again) starts unpaid.
+  React.useEffect(() => { setPaid(false); setPaidHere(null); }, [personId, s.booked]);
   React.useEffect(() => {
     if (!personId) return;
     let live = true;
@@ -283,6 +289,7 @@ export function BookingOverlay() {
       const count = await bookPackageSessions(p.id, selectedPkg.packageId, slots);
       track('booking_confirmed', { booking_type: 'package', sessions: count });
       setBookingQuote({ redeeming, dueNow });
+      setBookedMany(true);
       setChosenSlots({});
       useStore.getState().set('booked', true);
     } catch (error) {
@@ -343,7 +350,9 @@ export function BookingOverlay() {
         ? `$${dueNow}`
         : 'To agree';
 
-  const payStep = takesPayment && bookingQuote && !bookingQuote.redeeming && bookingQuote.dueNow > 0 && !paid;
+  // The server decides whether there is anything to pay: the panel looks for the
+  // booking's open checkout and calls onNone when there is none.
+  const payStep = !paid;
 
   if (s.booked) {
     return (
@@ -353,6 +362,7 @@ export function BookingOverlay() {
             <View style={{ width: '100%' }}>
               <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>
               <CheckoutPanel
+                subjectId={checkoutSubject}
                 onPaid={(total) => { setPaidHere(total); setPaid(true); }}
                 onNone={() => setPaid(true)}
               />
@@ -371,15 +381,15 @@ export function BookingOverlay() {
                 <Text style={[t.bodySm, { color: c.txt3, marginTop: 8, textAlign: 'center' }]}>
                   {bookingQuote.redeeming
                     ? 'Covered by your pack — nothing extra to pay for this booking.'
-                    : bookingQuote.dueNow > 0
-                      ? takesPayment
-                        ? paidHere === 0
-                          ? 'Confirmed — nothing to pay.'
-                          : paidHere !== null
-                            ? 'Paid. The money is held until the session is done.'
-                            : 'You can finish paying from Payments in your profile.'
-                        : `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
-                      : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
+                    : paidHere === 0
+                      ? 'Confirmed — nothing to pay.'
+                      : paidHere !== null
+                        ? 'Paid. The money is held until the session is done.'
+                        : bookingQuote.dueNow > 0
+                          ? takesPayment
+                            ? 'You can finish paying from Payments in your profile.'
+                            : `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
+                          : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
                 </Text>
               )}
               <View style={{ height: 24 }} />
@@ -446,6 +456,7 @@ export function BookingOverlay() {
               // Only the quote known before submission can describe it.
               const quote = usageKnown ? { redeeming, dueNow } : null;
               setBookingQuote(quote);
+              setBookedMany(false);
               void s.confirmBooking().then(() => {
                 if (!useStore.getState().booked) return;
                 // The amount the screen actually quoted. When the balance was

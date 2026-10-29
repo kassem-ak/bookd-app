@@ -10,6 +10,8 @@ import { RegistrationOverlay } from '../overlays/RegistrationOverlay';
 import { CoachDayViewOverlay } from '../overlays/CoachDayViewOverlay';
 import { PersonOverlay } from '../overlays/PersonOverlay';
 import { BookingOverlay } from '../overlays/BookingOverlay';
+import { EarningsOverlay } from '../overlays/EarningsOverlay';
+import { PaymentHistoryOverlay } from '../overlays/PaymentHistoryOverlay';
 import { BookingsOverlay } from '../overlays/BookingsOverlay';
 import {
   CommunityDetailOverlay,
@@ -33,6 +35,7 @@ import {
   CoachPackagesOverlay,
 } from '../overlays/CoachOverlays';
 import { CoachHoursOverlay, CoachSubjectsOverlay } from '../overlays/CoachSubjectsOverlay';
+import { PaymentMethodsOverlay } from '../overlays/PaymentMethodsOverlay';
 
 export function OverlayRouter({ id }: { id: string }) {
   switch (id) {
@@ -100,6 +103,12 @@ export function OverlayRouter({ id }: { id: string }) {
       return <CoachSubjectsOverlay />;
     case 'coachPackages':
       return <CoachPackagesOverlay />;
+    case 'paymentMethods':
+      return <PaymentMethodsOverlay />;
+    case 'earnings':
+      return <EarningsOverlay />;
+    case 'paymentHistory':
+      return <PaymentHistoryOverlay />;
     default:
       return null;
   }

@@ -246,5 +246,26 @@ begin
     raise exception 'FAIL 12c: the flag was left on';
   end if;
 
+  -- 13. A pack whose only session is in the past and nobody marked it done is refused
+  -- with the negotiation message, not the booking guard's 'already started'.
+  set local role service_role;
+  insert into packages (coach_id, sessions, price_cents, active) values (v_coach, 4, 20000, true) returning id into v_pkg;
+  insert into bookings (client_id, coach_id, package_id, scheduled_for, slot_label, status)
+  values (v_me, v_coach, v_pkg, now() - interval '1 day', 'ZZ past unmarked', 'confirmed');
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_me_auth::text, 'role', 'authenticated')::text, true);
+  begin
+    perform cancel_unused_package(v_coach, v_pkg);
+    raise exception 'FAIL 13: cancelled a pack with a past unmarked session';
+  exception when others then
+    get stacked diagnostics v_err = message_text;
+    if v_err like 'FAIL%' then raise; end if;
+    if v_err not like '%Ask to cancel instead%' then raise exception 'FAIL 13b: %', v_err; end if;
+  end;
+  set local role service_role;
+  if (select status from bookings where package_id = v_pkg) <> 'confirmed' then
+    raise exception 'FAIL 13c: a refused cancel touched the session';
+  end if;
+
   raise exception 'ALL FULFILMENT CHECKS PASSED';
 end $$;

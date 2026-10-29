@@ -376,5 +376,175 @@ begin
     raise exception 'FAIL 19d: a cancelled unused pack released money to the coach';
   end if;
 
+  -- 20. Members cannot write attendance or fees directly; leaving refunds the price paid, not the row's fee.
+  declare v_ev20 uuid; v_p20 uuid;
+  begin
+    set local role service_role;
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ tamper event', 2500, v_coach, now() + interval '5 days') returning id into v_ev20;
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_auth::text, 'role', 'authenticated')::text, true);
+    perform rsvp_to_event(v_ev20, true);
+    begin
+      update event_attendees set payment = 'refunded' where event_id = v_ev20 and user_id = v_me;
+      raise exception 'FAIL 20: member updated their own attendance payment';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      insert into event_attendees (event_id, user_id, payment, fee_cents) values (v_event, v_me, 'paid', 0);
+      raise exception 'FAIL 20b: member inserted a paid attendance';
+    exception when insufficient_privilege then null;
+    end;
+    set local role service_role;
+    select id into v_p20 from payments where kind = 'event' and subject_id = v_ev20 and payer_id = v_me and status = 'awaiting_payment';
+    perform payments_begin_charge(v_p20);
+    perform payments_mark_held(v_p20, 'zz_sub_20', 0, null);
+    update event_attendees set fee_cents = 1 where event_id = v_ev20 and user_id = v_me;
+    set local role authenticated;
+    perform rsvp_to_event(v_ev20, false);
+    set local role service_role;
+    if (select coalesce(sum(amount_cents), 0) from refunds where payment_id = v_p20) <> 2500 then
+      raise exception 'FAIL 20c: leaving refunded % instead of the 2500 paid', (select coalesce(sum(amount_cents), 0) from refunds where payment_id = v_p20);
+    end if;
+  end;
+
+  -- 21. No refund once the service has started: a session that began, an event that began.
+  declare v_b21 uuid; v_p21 uuid; v_ev21 uuid; v_ev21b uuid;
+  begin
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_auth::text, 'role', 'authenticated')::text, true);
+    v_b21 := create_booking_for_coach(v_coach, v_slot + interval '100 days', 'ZZ started', null, null);
+    set local role service_role;
+    select id into v_p21 from payments where kind = 'session' and subject_id = v_b21;
+    perform payments_begin_charge(v_p21);
+    perform payments_mark_held(v_p21, 'zz_sub_21', 0, null);
+    update bookings set scheduled_for = now() - interval '1 hour' where id = v_b21;
+    set local role authenticated;
+    begin
+      update bookings set status = 'cancelled' where id = v_b21;
+      raise exception 'FAIL 21: client cancelled a session that had started';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'This session has already started.' then raise exception 'FAIL 21b: %', v_err; end if;
+    end;
+    set local role service_role;
+    if exists (select 1 from refunds where payment_id = v_p21) then raise exception 'FAIL 21c: started session refunded'; end if;
+
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ started event', 2500, v_coach, now() - interval '1 minute') returning id into v_ev21;
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ future event', 2500, v_coach, now() + interval '1 day') returning id into v_ev21b;
+    set local role authenticated;
+    perform rsvp_to_event(v_ev21, true);
+    perform rsvp_to_event(v_ev21b, true);
+    set local role service_role;
+    select id into v_p21 from payments where kind = 'event' and subject_id = v_ev21 and payer_id = v_me;
+    perform payments_begin_charge(v_p21);
+    perform payments_mark_held(v_p21, 'zz_sub_21b', 0, null);
+    set local role authenticated;
+    begin
+      perform rsvp_to_event(v_ev21, false);
+      raise exception 'FAIL 21d: left a paid event after it started';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'This event has already started.' then raise exception 'FAIL 21e: %', v_err; end if;
+    end;
+    set local role service_role;
+    if exists (select 1 from refunds where payment_id = v_p21) then raise exception 'FAIL 21f: started event refunded'; end if;
+    select id into v_p21 from payments where kind = 'event' and subject_id = v_ev21b and payer_id = v_me;
+    perform payments_begin_charge(v_p21);
+    perform payments_mark_held(v_p21, 'zz_sub_21c', 0, null);
+    set local role authenticated;
+    perform rsvp_to_event(v_ev21b, false);
+    set local role service_role;
+    if (select coalesce(sum(amount_cents), 0) from refunds where payment_id = v_p21) <> 2500 then
+      raise exception 'FAIL 21g: leaving a future paid event did not refund';
+    end if;
+  end;
+
+  -- 22. A paid event's start cannot move into the past; removing the event refunds paid attendees.
+  declare v_ev22 uuid; v_p22 uuid;
+  begin
+    set local role service_role;
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ removed event', 2500, v_coach, now() + interval '3 days') returning id into v_ev22;
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_auth::text, 'role', 'authenticated')::text, true);
+    perform rsvp_to_event(v_ev22, true);
+    set local role service_role;
+    select id into v_p22 from payments where kind = 'event' and subject_id = v_ev22 and payer_id = v_me;
+    perform payments_begin_charge(v_p22);
+    perform payments_mark_held(v_p22, 'zz_sub_22', 0, null);
+    begin
+      update events set starts_at = now() - interval '2 days' where id = v_ev22;
+      raise exception 'FAIL 22: paid event moved into the past';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'This event has paid attendees; its start cannot be moved into the past.' then raise exception 'FAIL 22b: %', v_err; end if;
+    end;
+    update events set starts_at = now() + interval '4 days' where id = v_ev22;
+    delete from events where id = v_ev22;
+    if (select coalesce(sum(amount_cents), 0) from refunds where payment_id = v_p22) <> 2500 then
+      raise exception 'FAIL 22c: removing a paid event did not refund the attendee';
+    end if;
+  end;
+
+  -- 23. A coach cannot confirm a booking that is not paid, or complete a session before it starts.
+  declare v_b23 uuid; v_p23 uuid;
+  begin
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_auth::text, 'role', 'authenticated')::text, true);
+    v_b23 := create_booking_for_coach(v_coach, v_slot + interval '110 days', 'ZZ early', null, null);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_coach_auth::text, 'role', 'authenticated')::text, true);
+    begin
+      update bookings set status = 'confirmed' where id = v_b23;
+      raise exception 'FAIL 23: coach confirmed an unpaid booking';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'This booking has not been paid for yet.' then raise exception 'FAIL 23b: %', v_err; end if;
+    end;
+    set local role service_role;
+    select id into v_p23 from payments where kind = 'session' and subject_id = v_b23;
+    perform payments_begin_charge(v_p23);
+    perform payments_mark_held(v_p23, 'zz_sub_23', 0, null);
+    set local role authenticated;
+    begin
+      update bookings set status = 'completed' where id = v_b23;
+      raise exception 'FAIL 23c: coach completed a session before it started';
+    exception when others then
+      get stacked diagnostics v_err = message_text;
+      if v_err like 'FAIL%' then raise; end if;
+      if v_err <> 'That session has not started yet.' then raise exception 'FAIL 23d: %', v_err; end if;
+    end;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_auth::text, 'role', 'authenticated')::text, true);
+  end;
+
+  -- 24. Paying yourself opens nothing: the owner's own court is confirmed, the community owner joins free.
+  declare v_res24 uuid; v_ev24 uuid;
+  begin
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_owner_auth::text, 'role', 'authenticated')::text, true);
+    v_res24 := reserve_court(v_court2, v_slot + interval '120 days', 1, 'Single', false);
+    set local role service_role;
+    if (select status from court_reservations where id = v_res24) <> 'confirmed' then
+      raise exception 'FAIL 24: owner''s own reservation is %', (select status from court_reservations where id = v_res24);
+    end if;
+    if exists (select 1 from payments where subject_id = v_res24) then raise exception 'FAIL 24b: a payment opened for the owner''s own court'; end if;
+    insert into events (community_id, title, fee_cents, created_by, starts_at)
+    values (v_comm, 'ZZ own event', 2500, v_coach, now() + interval '3 days') returning id into v_ev24;
+    set local role authenticated;
+    perform set_config('request.jwt.claims', json_build_object('sub', v_coach_auth::text, 'role', 'authenticated')::text, true);
+    perform rsvp_to_event(v_ev24, true);
+    set local role service_role;
+    if (select payment from event_attendees where event_id = v_ev24 and user_id = v_coach) <> 'not_required' then
+      raise exception 'FAIL 24c: owner of the community is pending on their own event';
+    end if;
+    if exists (select 1 from payments where subject_id = v_ev24) then raise exception 'FAIL 24d: a payment opened for the owner''s own event'; end if;
+  end;
+
   raise exception 'ALL PAYMENTS SUBJECT CHECKS PASSED';
 end $$;

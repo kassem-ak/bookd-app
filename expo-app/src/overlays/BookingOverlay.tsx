@@ -1,6 +1,9 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { MissingSubject, OverlayHeader, OverlayScaffold } from '../components/Overlay';
+import { usePaymentConfig } from '../components/usePaymentConfig';
+import { paymentsOn } from '../lib/payments';
 import {
   Button, Card, Chip, Field, FormSheet, Icon, IconButton, Row, SectionHeading, VoltButton,
 } from '../components/ui';
@@ -139,7 +142,19 @@ export function BookingOverlay() {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [bookingQuote, setBookingQuote] = React.useState<{ redeeming: boolean; dueNow: number } | null>(null);
+  const paymentConfig = usePaymentConfig();
+  const [paid, setPaid] = React.useState(false);
+  // False until the checkout panel finds a payment: with payments off there is none, so no pay step flashes.
+  const [found, setFound] = React.useState(false);
+  // The total the panel charged (0 = confirmed free); null when nothing was paid here.
+  const [paidHere, setPaidHere] = React.useState<number | null>(null);
+  // A pack booked several at a time: the server returns a count, not the
+  // booking ids, so its checkout is found as the newest one instead.
+  const [bookedMany, setBookedMany] = React.useState(false);
+  const checkoutSubject = bookedMany ? undefined : s.bookedId ?? undefined;
   const personId = p?.id;
+  // A new booking (another coach, or booking again) starts unpaid.
+  React.useEffect(() => { setPaid(false); setFound(false); setPaidHere(null); }, [personId, s.booked]);
   React.useEffect(() => {
     if (!personId) return;
     let live = true;
@@ -276,8 +291,10 @@ export function BookingOverlay() {
       const count = await bookPackageSessions(p.id, selectedPkg.packageId, slots);
       track('booking_confirmed', { booking_type: 'package', sessions: count });
       setBookingQuote({ redeeming, dueNow });
+      setBookedMany(true);
       setChosenSlots({});
-      useStore.getState().set('booked', true);
+      // bookedId null: the panel must not load a stale single-booking subject.
+      useStore.setState({ booked: true, bookedId: null });
     } catch (error) {
       track('booking_failed', { error_code: analyticsErrorCode(error) });
       setBookingError(errorMessage(error));
@@ -316,6 +333,8 @@ export function BookingOverlay() {
     .sort(([a], [b]) => (a < b ? -1 : 1));
 
   const usageKnown = !selectedPkg?.packageId || owned !== null;
+  const payKind = selectedPkg?.packageId ? 'package' : 'session';
+  const takesPayment = paymentsOn(paymentConfig, payKind);
   const held = selectedPkg?.packageId ? owned?.get(selectedPkg.packageId) : undefined;
   const total = held?.total ?? selectedPkg?.sessions ?? 0;
   const remaining = held ? held.remaining : total;
@@ -334,31 +353,55 @@ export function BookingOverlay() {
         ? `$${dueNow}`
         : 'To agree';
 
+  // The server decides whether there is anything to pay: the panel looks for the
+  // booking's open checkout and calls onNone when there is none.
+  const payStep = !paid;
+
   if (s.booked) {
     return (
-      <OverlayScaffold header={<OverlayHeader title="Booking confirmed" onBack={s.closeOverlay} />}>
+      <OverlayScaffold header={<OverlayHeader title={payStep ? (found ? 'Pay to confirm' : 'Confirming…') : 'Booking confirmed'} onBack={s.closeOverlay} />}>
         <View style={{ paddingHorizontal: 18, alignItems: 'center', paddingTop: 60 }}>
-          <View style={{ width: 74, height: 74, borderRadius: 999, backgroundColor: c.volt, alignItems: 'center', justifyContent: 'center' }}>
-            <Icon name="check" size={34} color={c.ink} />
-          </View>
-          <Text style={[t.overlayTitle, { fontSize: 24, color: c.txt, marginTop: 18 }]}>You are booked!</Text>
-          <Text style={[t.bodyLg, { color: c.txt2, marginTop: 8, textAlign: 'center' }]}>
-            {selectedPkg.name} with {p.name.split(' ')[0]}
-            {bookDate ? ` · ${bookingDayLabel(bookDate)}` : ''}{bookSlot ? ` · ${bookSlot}` : ''}
-          </Text>
-          {bookingQuote && (
-            <Text style={[t.bodySm, { color: c.txt3, marginTop: 8, textAlign: 'center' }]}>
-              {bookingQuote.redeeming
-                ? 'Covered by your pack — nothing extra to pay for this booking.'
-                : bookingQuote.dueNow > 0
-                  ? `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
-                  : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
-            </Text>
+          {payStep ? (
+            <View style={{ width: '100%' }}>
+              {found && <Text style={[t.overlayTitle, { fontSize: 22, color: c.txt, marginBottom: 12 }]}>Pay to confirm</Text>}
+              <CheckoutPanel
+                subjectId={checkoutSubject}
+                onPaid={(total) => { setPaidHere(total); setPaid(true); }}
+                onNone={() => setPaid(true)}
+                onFound={() => setFound(true)}
+              />
+            </View>
+          ) : (
+            <>
+              <View style={{ width: 74, height: 74, borderRadius: 999, backgroundColor: c.volt, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="check" size={34} color={c.ink} />
+              </View>
+              <Text style={[t.overlayTitle, { fontSize: 24, color: c.txt, marginTop: 18 }]}>You are booked!</Text>
+              <Text style={[t.bodyLg, { color: c.txt2, marginTop: 8, textAlign: 'center' }]}>
+                {selectedPkg.name} with {p.name.split(' ')[0]}
+                {bookDate ? ` · ${bookingDayLabel(bookDate)}` : ''}{bookSlot ? ` · ${bookSlot}` : ''}
+              </Text>
+              {bookingQuote && (
+                <Text style={[t.bodySm, { color: c.txt3, marginTop: 8, textAlign: 'center' }]}>
+                  {bookingQuote.redeeming
+                    ? 'Covered by your pack — nothing extra to pay for this booking.'
+                    : paidHere === 0
+                      ? 'Confirmed — nothing to pay.'
+                      : paidHere !== null
+                        ? 'Paid. The money is held until the session is done.'
+                        : bookingQuote.dueNow > 0
+                          ? takesPayment
+                            ? 'You can finish paying from Payments in your profile.'
+                            : `$${bookingQuote.dueNow} is payable to ${p.name.split(' ')[0]} directly at your session.`
+                          : `Agree the price with ${p.name.split(' ')[0]} directly — BOOK'D does not take payment.`}
+                </Text>
+              )}
+              <View style={{ height: 24 }} />
+              <View style={{ width: '100%' }}>
+                <VoltButton label="View in bookings" onPress={s.goToBookings} />
+              </View>
+            </>
           )}
-          <View style={{ height: 24 }} />
-          <View style={{ width: '100%' }}>
-            <VoltButton label="View in bookings" onPress={s.goToBookings} />
-          </View>
         </View>
       </OverlayScaffold>
     );
@@ -381,7 +424,9 @@ export function BookingOverlay() {
                 : redeeming
                   ? `Covered by your pack — nothing extra to pay for this booking. ${remaining} of ${total} sessions left in this pack.`
                   : dueNow > 0
-                    ? "Payable to the coach at your session — BOOK'D does not take payment."
+                    ? takesPayment
+                      ? "You pay when you confirm. BOOK'D holds the money until the session is done."
+                      : "Payable to the coach at your session — BOOK'D does not take payment."
                     : "This coach has not set a price. Agree it with them directly — BOOK'D does not take payment."}
           </Text>
           {bookingError && (
@@ -415,6 +460,7 @@ export function BookingOverlay() {
               // Only the quote known before submission can describe it.
               const quote = usageKnown ? { redeeming, dueNow } : null;
               setBookingQuote(quote);
+              setBookedMany(false);
               void s.confirmBooking().then(() => {
                 if (!useStore.getState().booked) return;
                 // The amount the screen actually quoted. When the balance was
@@ -540,7 +586,9 @@ export function BookingOverlay() {
         >
           <Text style={[t.bodySm, { color: c.txt2 }]}>
             {p.name.split(' ')[0]} decides whether to cancel it and how much to give back — you can settle on a figure
-            between you. BOOK’D records what you agree; it does not move money.
+            between you. {paymentsOn(paymentConfig, 'package')
+              ? 'Once you both agree, BOOK’D sends the refund back to the card or Whish account that paid.'
+              : 'BOOK’D records what you agree; it does not move money.'}
           </Text>
           <Text style={[t.caption, { color: c.txt3 }]}>
             Sessions you have already booked stay in your calendar. Cancel those separately if you do not want them.

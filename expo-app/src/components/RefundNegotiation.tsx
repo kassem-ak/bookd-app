@@ -9,6 +9,8 @@ import { money, parseMoney } from '../lib/pricing';
 import { analyticsErrorCode, track } from '../lib/analytics';
 import { errorMessage } from '../state/store';
 import { alpha, useTheme } from '../theme';
+import { usePaymentConfig } from './usePaymentConfig';
+import { paymentsOn } from '../lib/payments';
 
 // Settling on what comes back.
 //
@@ -17,8 +19,9 @@ import { alpha, useTheme } from '../theme';
 // the table or naming another -- and two implementations of that would be two
 // places for the amounts to be presented differently.
 //
-// What the app is doing here is recording an agreement. It does not move money,
-// and the copy says so wherever a figure appears.
+// With payments off the app only records an agreement and does not move money,
+// and the copy says so wherever a figure appears. With them on, the refund goes
+// back to whatever paid.
 export function RefundNegotiation({ request, suggestedCents, onSettled }: {
   request: PackageCancellation;
   /** What to put in the box before anyone types: the unused share of what was
@@ -27,6 +30,7 @@ export function RefundNegotiation({ request, suggestedCents, onSettled }: {
   onSettled: () => void;
 }) {
   const { c, t } = useTheme();
+  const takesPayment = paymentsOn(usePaymentConfig(), 'package');
   const [offers, setOffers] = useState<RefundOffer[] | null>(null);
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
@@ -106,7 +110,9 @@ export function RefundNegotiation({ request, suggestedCents, onSettled }: {
           <Text style={[t.caption, { color: c.txt3 }]}>
             {offers?.length
               ? 'Counter with your own figure, or accept theirs.'
-              : 'Name the amount that comes back. BOOK’D records what you agree — it does not move the money.'}
+              : takesPayment
+                ? "Once you both agree, BOOK’D sends the refund back to the card or Whish account that paid."
+                : 'Name the amount that comes back. BOOK’D records what you agree — it does not move the money.'}
           </Text>
           <Row gap={10} style={{ alignItems: 'center' }}>
             <Text style={[t.price, { color: c.accent }]}>$</Text>

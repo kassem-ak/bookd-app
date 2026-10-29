@@ -1,11 +1,15 @@
 import { Feather, FontAwesome } from '@expo/vector-icons';
 import React, { ReactNode } from 'react';
 import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
   Modal,
   Pressable,
   Image,
   ScrollView,
   StyleProp,
+  StyleSheet,
   Text,
   TextInput,
   TextStyle,
@@ -13,7 +17,7 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Path } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { alpha, avatarSize, radii, useTheme } from '../theme';
 
 export type IconName = React.ComponentProps<typeof Feather>['name'];
@@ -698,6 +702,137 @@ export function Stars({ value, size = 14 }: { value: number; size?: number }) {
 
 export function Row({ children, style, gap }: { children: ReactNode; style?: StyleProp<ViewStyle>; gap?: number }) {
   return <View style={[{ flexDirection: 'row', alignItems: 'center' }, gap ? { gap } : null, style]}>{children}</View>;
+}
+
+// ---- Photo scrim ----
+// A dark fade over a photo, so white text at the bottom of a card reads on any
+// picture. Transparent down to `from` (0-1 of the height), then `opacity` at
+// the bottom. Always the dark ink, in both themes: the text on it is white.
+export function PhotoScrim({ from, opacity }: { from: number; opacity: number }) {
+  // Gradient ids are document-wide on the web, so each scrim needs its own.
+  const id = `scrim${React.useId().replace(/[^A-Za-z0-9]/g, '')}`;
+  return (
+    <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Defs>
+        <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <Stop offset={from} stopColor="#0D0E11" stopOpacity={0} />
+          <Stop offset={1} stopColor="#0D0E11" stopOpacity={opacity} />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+    </Svg>
+  );
+}
+
+// ---- Reduce motion ----
+// Starts true: until the setting is known, nothing moves.
+export function useReduceMotion() {
+  const [reduce, setReduce] = React.useState(true);
+  React.useEffect(() => {
+    let active = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((on) => { if (active) setReduce(on); })
+      .catch(() => { if (active) setReduce(false); });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
+    return () => { active = false; sub.remove(); };
+  }, []);
+  return reduce;
+}
+
+// ---- Page dots ----
+// The current card is a volt pill, the others small grey dots. Decorative: the
+// cards themselves are what a screen reader walks through.
+const DOT_EASE = Easing.bezier(0.23, 1, 0.32, 1);
+
+function PageDot({ active, reduceMotion }: { active: boolean; reduceMotion: boolean }) {
+  const { c } = useTheme();
+  const on = React.useRef(new Animated.Value(active ? 1 : 0)).current;
+  React.useEffect(() => {
+    Animated.timing(on, {
+      toValue: active ? 1 : 0,
+      duration: reduceMotion ? 0 : 200,
+      easing: DOT_EASE,
+      // Width is a layout property, which the native driver cannot animate.
+      useNativeDriver: false,
+    }).start();
+  }, [active, on, reduceMotion]);
+  return (
+    <Animated.View style={{
+      height: 6,
+      borderRadius: 3,
+      width: on.interpolate({ inputRange: [0, 1], outputRange: [6, 18] }),
+      backgroundColor: on.interpolate({ inputRange: [0, 1], outputRange: ['rgba(155,161,172,0.4)', c.volt] }),
+    }} />
+  );
+}
+
+export function PageDots({ count, index }: { count: number; index: number }) {
+  const reduceMotion = useReduceMotion();
+  if (count < 2) return null;
+  return (
+    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+      style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 10 }}>
+      {Array.from({ length: count }, (_, k) => <PageDot key={k} active={k === index} reduceMotion={reduceMotion} />)}
+    </View>
+  );
+}
+
+// ---- Snap carousel ----
+// A row of cards that bleeds to the screen edges and snaps each card to the
+// start. With more than one card, each is narrower than the row by `peek` so
+// the next one shows and says there is more. Page dots follow when there is
+// more than one.
+//
+// `bleed` is the screen gutter the row escapes; `glow` is extra room above and
+// below for a card shadow the scroll view would otherwise clip.
+export function SnapCarousel<T>({
+  items,
+  keyOf,
+  renderItem,
+  gap = 10,
+  peek = 28,
+  bleed = 18,
+  glow = 0,
+}: {
+  items: T[];
+  keyOf: (item: T) => string;
+  renderItem: (item: T, width: number) => ReactNode;
+  gap?: number;
+  peek?: number;
+  bleed?: number;
+  glow?: number;
+}) {
+  const [rowWidth, setRowWidth] = React.useState(0);
+  const [index, setIndex] = React.useState(0);
+  const cardWidth = items.length > 1 ? rowWidth - peek : rowWidth;
+  const step = cardWidth + gap;
+  // A filter that shrinks the list must not leave the dots on a card that is
+  // no longer there.
+  const shown = Math.min(index, Math.max(items.length - 1, 0));
+  return (
+    <View onLayout={(e) => setRowWidth(e.nativeEvent.layout.width)}>
+      {rowWidth > 0 && <>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={step}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          disableIntervalMomentum
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const next = Math.round(e.nativeEvent.contentOffset.x / step);
+            if (next !== index) setIndex(next);
+          }}
+          style={{ marginHorizontal: -bleed, marginVertical: -glow }}
+          contentContainerStyle={{ paddingHorizontal: bleed, paddingVertical: glow, gap }}
+        >
+          {items.map((item) => <View key={keyOf(item)} style={{ width: cardWidth }}>{renderItem(item, cardWidth)}</View>)}
+        </ScrollView>
+        <PageDots count={items.length} index={shown} />
+      </>}
+    </View>
+  );
 }
 
 export { ScrollView };

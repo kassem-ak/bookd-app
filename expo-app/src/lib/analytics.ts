@@ -12,6 +12,7 @@ export type AnalyticsEvent =
   | 'discover_searched'
   | 'discover_filter_changed'
   | 'discover_sort_changed'
+  | 'ad_opened'
   | 'profile_opened'
   | 'maps_filter_used'
   | 'community_joined'

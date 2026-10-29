@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
-  Avatar, Button, Card, Chip, Field, Icon, MicroBadge, Note, PhotoScrim, Row, SectionHeading, Segmented, SnapCarousel, Stars,
-  StatusLine,
+  Avatar, Button, Card, Chip, CoverPhoto, Field, Icon, MicroBadge, Note, PhotoScrim, pillBlur, Row, SectionHeading, Segmented,
+  SnapCarousel, Stars, StatusLine,
 } from '../components/ui';
-import { AdCard } from '../components/AdCard';
-import { fetchSponsoredAds, SponsoredAd } from '../lib/ads';
+import { AdCarousel } from '../components/AdCard';
 import { distanceKmBetween, formatDistanceKm, GeoPoint, getDevicePoint, parseGeoPoint } from '../lib/geo';
 import { track } from '../lib/analytics';
 import { Person, firstName, initials } from '../state/models';
@@ -45,12 +44,9 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
   const isCoaches = s.mode === 'coaches';
   const setStoreValue = useStore((state) => state.set);
   const [devicePoint, setDevicePoint] = useState<GeoPoint | null | undefined>(undefined);
-  const [ads, setAds] = useState<SponsoredAd[]>([]);
-  useEffect(() => {
-    let active = true;
-    fetchSponsoredAds('discover').then((rows) => { if (active) setAds(rows); });
-    return () => { active = false; };
-  }, []);
+  // Bumped by the screen's retry, so the sponsored cards reload with the rest.
+  const [adReloads, setAdReloads] = useState(0);
+  const retry = onRetry ? () => { setAdReloads((n) => n + 1); onRetry(); } : undefined;
   const query = s.discSearch;
   const setQuery = (value: string) => {
     s.set('discSearch', value);
@@ -114,9 +110,9 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
 
   const activeSortBy = s.sortBy === 'distance' && !canSortByDistance ? null : s.sortBy;
   // Boosting buys the carousel, not a place out of the list: a boosted coach
-  // is still where the chosen sort puts them below, so sorting by price still
-  // shows every coach in price order.
-  const featured = isCoaches ? entries.filter((entry) => entry.person.boosted) : [];
+  // or partner is still where the chosen sort puts them below, so sorting by
+  // price still shows every coach in price order.
+  const featured = entries.filter((entry) => entry.person.boosted);
   const rest = entries
     .slice()
     .sort((a, b) => {
@@ -227,17 +223,17 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
         <Field value={query} onChange={setQuery} placeholder="Search Coach, Mentor" icon="search" />
       </View>
 
-      {/* Keyed by mode so switching coaches|Partners starts each carousel
-          back at its first card. */}
-      {featured.length > 0 && <View key="featured-coaches">
-        <SectionHeading style={{ marginTop: 26, marginBottom: 11 }}>Featured coaches</SectionHeading>
+      {/* Partners mode leads with the paid cards, as the design has it. Only
+          fetched there: Coaches mode never shows them. */}
+      {!isCoaches && <AdCarousel placement="discover" reloadKey={adReloads} style={{ marginTop: 26 }} />}
+      {/* Keyed by mode so switching coaches|Partners starts the carousel back
+          at its first card instead of reusing the other list's position. */}
+      {featured.length > 0 && <View key={`featured-${s.mode}`}>
+        <SectionHeading style={{ marginTop: 26, marginBottom: 11 }}>Featured {isCoaches ? 'coaches' : 'partners'}</SectionHeading>
         <SnapCarousel items={featured} keyOf={({ person }) => person.id} glow={14}
           renderItem={({ person, distanceLabel }, width) => (
-            <FeaturedCoachCard p={person} width={width} distanceLabel={distanceLabel} onPress={() => s.openPerson(person.id)} />
+            <FeaturedPersonCard p={person} width={width} distanceLabel={distanceLabel} onPress={() => s.openPerson(person.id)} />
           )} />
-      </View>}
-      {!isCoaches && ads.length > 0 && <View key="partner-ads" style={{ marginTop: 26 }}>
-        <SnapCarousel items={ads} keyOf={(ad) => ad.id} renderItem={(ad, width) => <AdCard ad={ad} width={width} />} />
       </View>}
 
       <Row style={{ marginTop: 26, marginBottom: 11, justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -253,7 +249,7 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
       </Row>
       {loadError ? <View accessibilityRole="alert">
         <StatusLine>{loadError}</StatusLine>
-        {onRetry && <Button label="Try again" icon="refresh-cw" tone="danger" onPress={onRetry} style={{ marginTop: 12 }} />}
+        {retry && <Button label="Try again" icon="refresh-cw" tone="danger" onPress={retry} style={{ marginTop: 12 }} />}
       </View> : entries.length === 0 && (
         <View style={{ gap: 12, alignItems: 'flex-start' }}>
           <StatusLine>{emptyMessage}</StatusLine>
@@ -273,22 +269,24 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
   );
 }
 
-// A boosted coach, as a photo card in the Featured carousel.
+// A boosted coach or training partner, as a photo card in the Featured carousel.
 //
 // Drawn dark in both themes: white type sits on the photo, held up by the
 // scrim. The gold edge is a shadow on the outer view and the clipping on the
 // inner one, because a view that clips also clips its own outer shadow.
-function FeaturedCoachCard({ p, width, distanceLabel, onPress }: {
+function FeaturedPersonCard({ p, width, distanceLabel, onPress }: {
   p: Person; width: number; distanceLabel?: string | null; onPress: () => void;
 }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const photo = p.avatarUrl && p.avatarUrl !== failedUrl ? p.avatarUrl : null;
   const meta = personMetaLabel(p, distanceLabel);
-  const hasPrice = Number(p.price) > 0;
+  const hasPrice = p.isCoach && Number(p.price) > 0;
+  const level = !p.isCoach && p.level ? p.level : null;
   const rating = p.reviews > 0 ? `${p.rating.toFixed(1)} (${p.reviews})` : null;
   return (
     <Pressable onPress={onPress} accessibilityRole="button"
-      accessibilityLabel={[`${p.name}, boosted coach`, meta, rating && `rated ${rating}`, hasPrice && `$${p.price} per session`].filter(Boolean).join(', ')}
+      accessibilityLabel={[`${p.name}, boosted ${p.isCoach ? 'coach' : 'training partner'}`, meta, rating && `rated ${rating}`,
+        hasPrice && `$${p.price} per session`, level].filter(Boolean).join(', ')}
       style={{
         width,
         height: 228,
@@ -300,8 +298,7 @@ function FeaturedCoachCard({ p, width, distanceLabel, onPress }: {
       }}>
       <View style={[StyleSheet.absoluteFill, { borderRadius: 21, overflow: 'hidden' }]}>
         {photo ? (
-          <Image source={{ uri: photo }} onError={() => setFailedUrl(photo)} resizeMode="cover"
-            style={StyleSheet.absoluteFill} accessibilityIgnoresInvertColors />
+          <CoverPhoto uri={photo} onError={() => setFailedUrl(photo)} />
         ) : (
           // No photo: the initials, large, where the face would be.
           <View style={[StyleSheet.absoluteFill, { backgroundColor: dark.avatarBg, alignItems: 'center', paddingTop: 44 }]}>
@@ -311,7 +308,7 @@ function FeaturedCoachCard({ p, width, distanceLabel, onPress }: {
         <PhotoScrim from={0.35} opacity={0.92} />
       </View>
 
-      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(13,14,17,0.72)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+      <View style={[{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(13,14,17,0.72)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }, pillBlur]}>
         <Text style={{ fontFamily: fonts.archivo800, fontSize: 9, letterSpacing: 0.8, color: dark.amber }}>BOOSTED</Text>
       </View>
 
@@ -330,6 +327,9 @@ function FeaturedCoachCard({ p, width, distanceLabel, onPress }: {
           <Text style={{ fontFamily: fonts.archivo800, fontSize: 22, color: dark.volt, fontVariant: ['tabular-nums'] }}>${p.price}</Text>
           <Text style={{ fontFamily: fonts.hanken400, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>per session</Text>
         </View>}
+        {/* A partner has no rate; the list card shows their level in that
+            place, and so does this one. */}
+        {level && <Text numberOfLines={1} style={{ fontFamily: fonts.hanken700, fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>{level}</Text>}
       </View>
     </Pressable>
   );

@@ -36,13 +36,18 @@ function load({ rows = [], error = null } = {}) {
     exports,
     require: (id) => {
       if (id === './socialLinks') return socialLinks;
-      if (id === './supabase') return { isSupabaseConfigured: true, supabase: { from: (table) => { calls.push(['from', table]); return query; } } };
+      if (id === './supabase') return { isSupabaseConfigured: true, supabase: {
+        from: (table) => { calls.push(['from', table]); return query; },
+        rpc: (fn, args) => { calls.push(['rpc', fn, args]); return Promise.resolve({ error: null }); },
+      } };
       throw new Error(`Unexpected import: ${id}`);
     },
     Promise,
   });
   return { lib: exports, calls };
 }
+
+const plain = (value) => JSON.parse(JSON.stringify(value));
 
 const ROW = {
   id: 'a1', placement: 'discover', brand: 'Brand', headline: 'Headline', body: 'Body', cta: 'Go',
@@ -51,9 +56,10 @@ const ROW = {
 
 test('a complete row becomes a complete card', () => {
   const { lib } = load();
-  assert.deepEqual({ ...lib.toSponsoredAd(ROW) }, {
+  assert.deepEqual(plain(lib.toSponsoredAd(ROW)), {
     id: 'a1', brand: 'Brand', headline: 'Headline', body: 'Body', cta: 'Go',
     imageUrl: 'https://cdn.example.com/a.jpg', linkUrl: 'https://example.com/offer',
+    logo: null, tint: null, audience: [], position: null,
   });
 });
 
@@ -104,4 +110,49 @@ test('reads active rows for the placement, and skips the unusable ones', async (
 test('a failed read is no cards, not an error', async () => {
   const { lib } = load({ error: { message: 'permission denied' } });
   assert.deepEqual([...await lib.fetchSponsoredAds('discover')], []);
+});
+
+test('logo and tint are kept only when they are a short badge and a plain colour', () => {
+  const { lib } = load();
+  const ad = lib.toSponsoredAd({ ...ROW, logo: 'sl', tint: '#2A3A2E' });
+  assert.equal(ad.logo, 'SL');
+  assert.equal(ad.tint, '#2A3A2E');
+  const bad = lib.toSponsoredAd({ ...ROW, logo: '<img>', tint: 'red; background:url(x)' });
+  assert.equal(bad.logo, null);
+  assert.equal(bad.tint, null);
+});
+
+test('targeting becomes readable lines, and anything unknown or odd is left out', () => {
+  const { lib } = load();
+  assert.deepEqual(plain(lib.audienceLines({ hobbies: ['Running'], goal: 'Run a marathon' })),
+    ['People into Running', 'People whose goal is Run a marathon']);
+  assert.deepEqual(plain(lib.audienceLines({ communities: ['Running', 'Strength'] })),
+    ['Members of Running and Strength communities']);
+  assert.deepEqual(plain(lib.audienceLines({ secret_segment: ['vip'], hobbies: [42, 'x'.repeat(41)] })), []);
+  assert.deepEqual(plain(lib.audienceLines('not an object')), []);
+  assert.deepEqual(plain(lib.audienceLines(null)), []);
+});
+
+test('cards come in chosen order, unpositioned ones last by brand', async () => {
+  const rows = [
+    { ...ROW, id: 'z', brand: 'Zed' },
+    { ...ROW, id: 'b', brand: 'Bee', position: 2 },
+    { ...ROW, id: 'a', brand: 'Aye' },
+    { ...ROW, id: 'c', brand: 'Cee', position: 1 },
+  ];
+  const { lib } = load({ rows });
+  assert.deepEqual((await lib.fetchSponsoredAds('discover')).map((ad) => ad.id), ['c', 'b', 'a', 'z']);
+});
+
+test('a view counts once per card per launch, an open every time', () => {
+  const { lib, calls } = load();
+  assert.equal(lib.recordAdEvent('a1', 'view'), true);
+  assert.equal(lib.recordAdEvent('a1', 'view'), false);
+  assert.equal(lib.recordAdEvent('a1', 'open'), true);
+  assert.equal(lib.recordAdEvent('a1', 'open'), true);
+  assert.deepEqual(plain(calls.filter((c) => c[0] === 'rpc')), [
+    ['rpc', 'record_ad_event', { p_ad: 'a1', p_kind: 'view' }],
+    ['rpc', 'record_ad_event', { p_ad: 'a1', p_kind: 'open' }],
+    ['rpc', 'record_ad_event', { p_ad: 'a1', p_kind: 'open' }],
+  ]);
 });

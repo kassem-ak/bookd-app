@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { Avatar, Button, Card, Icon, Row, SectionHeading } from '../components/ui';
+import { AdCarousel } from '../components/AdCard';
 import { fetchConversations, type ConversationSummary } from '../lib/chat';
 import { fetchNotifications, type AppNotification } from '../lib/notifications';
 import { useMyCommunities } from '../components/useMyCommunities';
@@ -206,6 +207,11 @@ export function ChatScreen() {
           )}
         </View>
       )}
+
+      {/* The `community` placement: offers for people who train in groups.
+          Below the conversations, never above them -- they are why anyone
+          opens this tab. Reloads with the screen's own retry. */}
+      <AdCarousel placement="community" reloadKey={reloads} heading="Sponsored" style={{ marginTop: 34 }} />
 
       {/* spec 5: "Session reminders" card with an "Open booking" action. The copy
           is the newest real booking notification, not a scripted line. */}

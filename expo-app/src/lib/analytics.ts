@@ -13,6 +13,8 @@ export type AnalyticsEvent =
   | 'discover_filter_changed'
   | 'discover_sort_changed'
   | 'ad_opened'
+  | 'ad_viewed'
+  | 'ad_why_opened'
   | 'profile_opened'
   | 'maps_filter_used'
   | 'community_joined'
@@ -96,12 +98,17 @@ const ENUMS: Record<string, readonly string[]> = {
   filter: ['sport', 'mode'],
   mode: ['coaches', 'partners'],
   sort: ['rating', 'price', 'distance'],
+  placement: ['discover', 'community'],
   kind: ['Meetup', 'Event', 'Sport', 'Hobby'],
   booking_type: ['purchase', 'redemption'],
   error_type: ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError'],
 };
 const BOOLEANS = new Set(['has_input', 'active', 'confirmation_required']);
 const NUMBERS = new Set(['selected_index', 'package_index', 'sessions', 'amount_cents']);
+// Row ids of things the platform itself publishes (a sponsored card), never of
+// a person: a uuid says which advert, and nothing about who looked at it.
+const IDS = new Set(['ad_id']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ERROR_CODES = new Set([
   'UNKNOWN_ERROR', 'COACH_UNAVAILABLE', 'invalid_credentials', 'email_not_confirmed',
   'user_already_exists', 'signup_disabled', 'over_request_rate_limit',
@@ -123,13 +130,14 @@ export function analyticsErrorCode(error: unknown): string {
 function sanitize(props: Props): Props {
   const safe: Props = {};
   // Iterate our small allowlist, not an arbitrarily large caller object.
-  for (const key of [...Object.keys(ENUMS), ...BOOLEANS, ...NUMBERS, 'error_code']) {
+  for (const key of [...Object.keys(ENUMS), ...BOOLEANS, ...NUMBERS, ...IDS, 'error_code']) {
     if (PII_KEY.test(key) || !Object.prototype.hasOwnProperty.call(props, key)) continue;
     const value = props[key];
     if (value === null
       || (ENUMS[key]?.includes(value as string))
       || (BOOLEANS.has(key) && typeof value === 'boolean')
       || (NUMBERS.has(key) && typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+      || (IDS.has(key) && typeof value === 'string' && UUID.test(value))
       || (key === 'error_code' && isErrorCode(value))) safe[key] = value;
   }
   return safe;
@@ -178,7 +186,7 @@ export function track(event: AnalyticsEvent, props: Props = {}): void {
 
 export function identify(id: string | null): void {
   // public.users uses UUIDs. Reject accidental emails or other identifiers.
-  userId = typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
+  userId = typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
 // There is deliberately no default sink, storage, transport or SDK. Detaching

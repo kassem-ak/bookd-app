@@ -33,7 +33,7 @@ Real money leaves the company account **only when someone asks for it**:
 Moving money to capital, giving balance to another shareholder, or the nightly profit split only change the numbers.
 
 **Safety rule:** a withdrawal or capital spend is refused if it would leave the company account with
-less than what is still owed to members (payments waiting, refunds) and to coaches, venues,
+less than what is still owed to members (payments waiting, refunds, wallet balances) and to coaches, venues,
 organisers and sellers. Shareholders can never withdraw money that belongs to members or payees.
 
 ---
@@ -116,6 +116,17 @@ Every night the system closes the day:
 - **Give to another shareholder:** any amount up to your balance. Only you can do this. Both of you are notified.
 - **Automatic transfer:** off unless you turn it on yourself — e.g. "send me everything over $500"
   or "send me my balance every month". No one else can set it for you.
+
+### Member wallet
+
+Members can keep money in an app **wallet** and pay bookings from it.
+
+- **Top up:** the member pays a chosen amount with a card or Whish account. The payment fee applies to the top-up. The money sits in the same company account; the wallet balance is a soft split like everything else.
+- **Protected:** wallet balances, like money held for bookings and money owed to coaches and venues, can never be spent by the company. The safety rule in section 1 includes them.
+- **Paying:** at checkout the member can pay from the wallet when the balance covers the price. No fee. From there the booking follows the same path: held until done, complaint period, released to the coach or venue minus BOOK'D's percentage.
+- **Refunds** of wallet-paid bookings go back into the wallet at once.
+- **No withdrawals** for now: wallet money is spent on bookings or refunded into the wallet.
+- Minimum top-up and maximum balance are set in the payment settings.
 
 ### Company capital
 

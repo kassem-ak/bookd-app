@@ -3137,6 +3137,46 @@ Expected: `cash = split`.
 
 ---
 
+---
+
+# Stage E — Member wallet (added 2026-10-12 at Kassem's request)
+
+### Task 15: Wallet — deposits and paying from balance (database)
+
+Ruling recorded in the ledger: no withdrawals in v1 (wallet money is spent on bookings or refunded back into the wallet); deposits carry the member fee (the gateway fee), wallet payments carry no fee; wallet balances are part of the protected pool (never spendable by the company).
+
+**Files:**
+- Create: `db/migrations/2026-10-12_payments_wallet.sql`
+- Test: `db/tests/payments_wallet.sql`
+
+**Interfaces:**
+- Consumes: ledger (`private.post_entry`, `private.ensure_account`), `payments`, `private.mark_payment_held`, `private.refund_payment`, `private.payments_tick`, `payment_settings`, the `payments` edge function's `checkout` contract.
+- Produces:
+  - `ledger_accounts` per-member code `wallet:<users.id>` (liability, owner = member), created on demand.
+  - `payment_settings` gains `wallet_min_deposit_cents int not null default 500`, `wallet_max_balance_cents int not null default 100000`.
+  - `wallet_deposits(id, user_id, amount_cents, fee_cents, status awaiting_payment|charging|held|failed|expired, provider, provider_ref unique, method_id, expires_at, held_at, created_at)` — RLS: member selects own; writes service_role only.
+  - `public.wallet_balance_cents() returns int` — authenticated, own balance, derived from the ledger.
+  - `public.open_wallet_deposit(p_amount int) returns table(id uuid, amount_cents int, fee_cents int, total_cents int)` — authenticated; checks min ('Deposit at least …') and max (balance + open deposits + amount ≤ max, 'Your wallet can hold at most …'); fee as `open_payment` computes it.
+  - Service-role RPCs mirroring the payment ones: `wallet_deposit_begin_charge(p_deposit) returns table(begun boolean, amount_cents int, fee_cents int)`, `wallet_deposit_end_charge(p_deposit)`, `wallet_deposit_mark_held(p_deposit, p_ref, p_cost, p_method)` — on held it posts `company_cash +(amount+fee)`, `wallet:<user> −amount`, `fee_income −fee` (+ a gateway_cost entry when p_cost > 0), idempotent on the deposit id.
+  - `public.pay_from_wallet(p_payment uuid) returns void` — authenticated, payer only, payment must be `awaiting_payment` and not expired; locks the payment row, then `pg_advisory_xact_lock(hashtext('wallet:' || member))`; sets `fee_cents = 0`; requires balance ≥ price_cents else 'Not enough in your wallet.'; sets `charging` then calls `private.mark_payment_held(p_payment, 'wallet:' || p_payment, 0, null)`. `mark_payment_held` learns the `wallet:` ref: the checkout entry becomes `wallet:<payer> +price`, `held −price` (no cash line, no fee line); the free/non-free ref checks treat `wallet:` like a real ref (total must be > 0).
+  - Refunds of wallet-paid payments (provider_ref like `wallet:%`): `private.refund_payment` inserts the `refunds` row directly as `sent` with `provider_ref = 'wallet'` and posts `held +r`, `wallet:<payer> −r` (no `member_refund`, no queue).
+  - `private.payments_tick` also expires `wallet_deposits` past `expires_at` (own exception block).
+  - Protected-pool rule (spec section 1; enforced by whichever function spends company money): spendable = `company_cash − (held + Σpayee + Σmember_refund + Σwallet)`.
+
+- [ ] **Step 1: Write the failing test** — `db/tests/payments_wallet.sql`: fixture member + coach (price 5000), `fee_bps 300`, `enabled_kinds {session}`, min 500, max 100000. Checks: (1) `open_wallet_deposit(10000)` → fee 300, total 10300; (2) 400 → 'Deposit at least'; (3) begin/mark_held → `wallet_balance_cents()` = 10000, `company_cash` +10300, soft-split identity holds; (4) book a session, `pay_from_wallet` → payment `held`, fee 0, balance 5000, `held` ledger 5000, cash unchanged; (5) a second session with balance 5000 and price 5000 passes, a third → 'Not enough in your wallet.'; (6) cancel a wallet-paid session → refund row `sent`, provider_ref 'wallet', balance restored; (7) another member calling `pay_from_wallet` on it → refused; (8) complete + release → payee balance 5000 − commission, commission posted, wallet unchanged; (9) a deposit that would exceed the max → refused; (10) tick expires an overdue deposit. Final raise `ALL PAYMENTS WALLET CHECKS PASSED`.
+- [ ] **Step 2: Run it to verify it fails.** **Step 3: Write the migration** (copy live bodies of `mark_payment_held`, `refund_payment`, `payments_tick` with `pg_get_functiondef`; change only the wallet lines; grants by name; no blanket revoke). **Step 4: Apply** as `payments_wallet`. **Step 5: Run the test**, then `payments_core.sql`, `payments_promos.sql`, `payments_subjects.sql`, `payments_ledger.sql`. **Step 6: Commit.**
+
+### Task 16: Wallet — gateway and client
+
+- Edge function `payments`: new action `deposit` `{depositId, methodId}` → same shape as `checkout` (lock via `wallet_deposit_begin_charge`, charge `amount + fee`, `wallet_deposit_mark_held`, decline → `wallet_deposit_end_charge`, same error contract). Redeploy; probe unauthenticated → 'Sign in first.'.
+- `lib/payments.ts`: `walletBalance(): Promise<number>`, `openDeposit(amountCents): Promise<{id, amountCents, feeCents, totalCents}>`, `payDeposit(depositId, methodId): Promise<{ok:true}|{ok:false,message}>`, `payFromWallet(paymentId): Promise<void>` (rpc), `fetchWalletHistory(): Promise<WalletEntry[]>` (`{id, kind:'deposit'|'payment'|'refund', amountCents, status, createdAt, label}` from `wallet_deposits`, wallet-paid `payments`, and wallet `refunds`, newest first). A test for each.
+
+### Task 17: Wallet — app
+
+- `overlays/WalletOverlay.tsx` (route `'wallet'`; Settings row "Wallet" — "Top up and pay from your balance", icon `dollar-sign`): balance, "Top up" with preset amounts ($10 / $25 / $50) and a custom field, pays with a saved method (chips) or `AddPaymentMethod`, shows the fee and total before paying, history list. `PracticeBanner` on top.
+- `CheckoutPanel`: a "Pay from wallet · balance $X" chip first in the method list when balance ≥ total; when short, a line "Top up to pay from your wallet" that opens the wallet. Choosing it calls `payFromWallet` and then `onPaid()`.
+- Copy: refunds of wallet-paid bookings "go back to your wallet".
+
 ## Not in this plan (console plan next)
 
 - **Console pages:** payment setup (developer admin only, unanimous approval), rates, expenses, profit & loss, shares, wallet, capital, money operations, reconciliation, activity log.

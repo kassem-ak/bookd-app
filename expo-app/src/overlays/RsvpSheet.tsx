@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { Sheet } from '../components/Sheet';
+import { usePaymentConfig } from '../components/usePaymentConfig';
 import { Chip, Row, Segmented, SectionHeading, Toggle, VoltButton } from '../components/ui';
 import { formatCents } from '../lib/bookings';
 import { Venue } from '../lib/courts';
+import { paymentsOn } from '../lib/payments';
 import { perHourLabel, rsvpSubject } from '../state/courtsData';
 import { useStore } from '../state/store';
 import { radii, useTheme } from '../theme';
@@ -128,11 +131,29 @@ export function RsvpSheet() {
   };
 
   const [booked, setBooked] = useState(false);
+  const paymentConfig = usePaymentConfig();
+  const [paid, setPaid] = useState(false);
+  const [noPayment, setNoPayment] = useState(false);
+  const [found, setFound] = useState(false);
+  const takesPayment = paymentsOn(paymentConfig, perHour ? 'court' : 'tournament');
   const confirm = () => {
     void s.confirmRsvp().then((ok) => { if (ok) setBooked(true); });
   };
 
   const canConfirm = Boolean(subject) && (!perHour || Boolean(s.rsvpStartsAt));
+
+  // The server decides whether there is anything to pay: the panel looks for
+  // this reservation's open checkout and calls onNone when there is none.
+  if (booked && !paid && !noPayment) {
+    return (
+      <Sheet title={found ? 'Pay to confirm' : 'Confirming…'} subtitle={venue ? venue.name : ''} onClose={close}>
+        <View style={{ padding: 16 }}>
+          <CheckoutPanel subjectId={s.rsvpBookedId ?? undefined}
+            onPaid={() => setPaid(true)} onNone={() => setNoPayment(true)} onFound={() => setFound(true)} />
+        </View>
+      </Sheet>
+    );
+  }
 
   if (booked) {
     return (
@@ -155,7 +176,9 @@ export function RsvpSheet() {
           )}
           <Text style={[t.price, { color: c.accent }]}>{formatCents(total)}</Text>
           <Text style={[t.caption, { color: c.txt3 }]}>
-            It is in My bookings now. The venue is paid at the door — BOOK’D does not move money.
+            {paid
+              ? 'It is in My bookings now. Paid — BOOK’D holds the money until it is done.'
+              : 'It is in My bookings now. The venue is paid at the door — BOOK’D does not move money.'}
           </Text>
         </View>
       </Sheet>
@@ -293,7 +316,7 @@ export function RsvpSheet() {
         <View style={{ flex: 1 }}>
           <Text style={[t.label, { color: c.txt }]}>Total</Text>
           <Text style={[t.caption, { fontSize: 11.5, color: c.txt3, marginTop: 2 }]}>
-            Estimate · confirmed by the venue
+            {takesPayment ? 'You pay this when you confirm' : 'Estimate · confirmed by the venue'}
           </Text>
         </View>
         <Text style={[t.price, { fontSize: 18, color: c.accent }]}>{formatCents(total)}</Text>

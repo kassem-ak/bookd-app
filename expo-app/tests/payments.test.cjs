@@ -79,6 +79,17 @@ test('earnings split by where the money is', () => {
   });
 });
 
+test('earnings use what the server says the payee is owed', () => {
+  const { module } = harness();
+  const base = { kind: 'session', subjectId: 's', role: 'payee', feeCents: 0, status: 'closed', createdAt: '', expiresAt: '', refundedCents: 0 };
+  // A platform code paid 1000 of a 5000 list price: the coach is owed 4400 on the list price, not 1000 - 120.
+  const summary = module.earningsSummary([
+    { ...base, id: 'a', priceCents: 1000, releases: [{ id: 'r1', amountCents: 1000, commissionCents: 600, payeeCents: 4400, releaseAt: '', status: 'released' }] },
+    { ...base, id: 'b', priceCents: 5000, releases: [{ id: 'r2', amountCents: 5000, commissionCents: 600, payeeCents: null, releaseAt: '', status: 'released' }] },
+  ]);
+  assert.equal(summary.releasedCents, 8800);
+});
+
 test('payFor sends the checkout action and passes a decline through', async () => {
   const { module, calls } = harness({ '/functions/v1/payments': { ok: false, message: 'The test card was declined. Try another method.' } });
   const result = await module.payFor('p1', 'm1');
@@ -121,6 +132,36 @@ test('applyPromoCode sends the rpc args and maps the quote row', async () => {
   const result = await module.applyPromoCode('p1', 'SPRING');
   assert.deepEqual(calls.at(-1).body, { p_payment: 'p1', p_code: 'SPRING' });
   assert.deepEqual({ ...result }, { priceCents: 4000, discountCents: 1000, feeCents: 145, totalCents: 4145, promoKind: 'coach' });
+});
+
+const AWAITING = {
+  id: 'p1', kind: 'court', subject_id: 'res-1', payer_id: ME, payee_id: 'x', price_cents: 3000, fee_cents: 0,
+  status: 'awaiting_payment', created_at: '2026-10-10T10:00:00Z', expires_at: '2026-10-10T10:15:00Z',
+  payment_releases: [], refunds: [],
+};
+
+test('fetchAwaitingPayment with a subject asks for that subject only', async () => {
+  const { module, calls } = harness({ '/rest/v1/payments': [AWAITING] });
+  const row = await module.fetchAwaitingPayment('res-1');
+  assert.equal(row.subjectId, 'res-1');
+  const query = new URLSearchParams(calls.at(-1).query);
+  assert.equal(query.get('subject_id'), 'eq.res-1');
+  assert.equal(query.get('payer_id'), `eq.${ME}`);
+  assert.equal(query.get('status'), 'eq.awaiting_payment');
+  assert.equal(query.get('limit'), '1');
+});
+
+test('fetchAwaitingPayment without a subject takes the newest open checkout', async () => {
+  const { module, calls } = harness({ '/rest/v1/payments': [AWAITING] });
+  await module.fetchAwaitingPayment();
+  const query = new URLSearchParams(calls.at(-1).query);
+  assert.equal(query.has('subject_id'), false);
+  assert.equal(query.get('order'), 'created_at.desc');
+});
+
+test('fetchAwaitingPayment returns null when nothing is open for the subject', async () => {
+  const { module } = harness({ '/rest/v1/payments': [] });
+  assert.equal(await module.fetchAwaitingPayment('res-2'), null);
 });
 
 test('payFor surfaces the server message from a non-2xx reply', async () => {

@@ -339,14 +339,19 @@ export function hasFulfilledSession(progress: PackageProgress): boolean {
  *  No request and no offer: the server refuses if a single session on the pack
  *  was confirmed by both sides, so the client's screen is not the thing
  *  deciding what a refund is worth. */
-export async function cancelUnusedPackage(coachId: string, packageId: string): Promise<number> {
+export async function cancelUnusedPackage(
+  coachId: string,
+  packageId: string,
+): Promise<{ refundCents: number; moved: boolean }> {
   const { data, error } = await supabase.rpc('cancel_unused_package', {
     p_coach: coachId,
     p_package: packageId,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
-  return (row?.refund_cents as number) ?? 0;
+  // `moved`: held money was sent back to the card. A pack bought before
+  // payments was paid to the coach directly, so nothing moves through BOOK'D.
+  return { refundCents: (row?.refund_cents as number) ?? 0, moved: row?.moved === true };
 }
 
 export function suggestedRefundCents(progress: PackageProgress, packPriceCents: number): number {

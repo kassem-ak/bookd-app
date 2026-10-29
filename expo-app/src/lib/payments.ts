@@ -40,6 +40,8 @@ export type PaymentMethod = {
 export type Release = {
   id: string; amountCents: number; commissionCents: number; releaseAt: string;
   status: 'waiting' | 'disputed' | 'released' | 'refunded';
+  /** What the payee is owed, set by the server when the release is priced (null before). */
+  payeeCents: number | null;
 };
 
 export type MyPayment = {
@@ -69,7 +71,7 @@ export function earningsSummary(payments: MyPayment[]): Earnings {
     for (const r of p.releases) {
       if (r.status === 'refunded') continue;
       allocated += r.amountCents;
-      const share = r.amountCents - r.commissionCents;
+      const share = r.payeeCents ?? r.amountCents - r.commissionCents;
       if (r.status === 'waiting') out.inComplaintPeriodCents += share;
       else if (r.status === 'disputed') out.disputedCents += share;
       else if (r.status === 'released') { out.releasedCents += share; out.commissionCents += r.commissionCents; }
@@ -143,13 +145,16 @@ export async function setDefaultPaymentMethod(id: string, purpose: 'pay' | 'rece
 
 const PAYMENT_COLUMNS =
   'id, kind, subject_id, payer_id, payee_id, price_cents, fee_cents, discount_cents, promo_code, status, created_at, expires_at, '
-  + 'payment_releases(id, amount_cents, commission_cents, release_at, status), refunds(amount_cents)';
+  + 'payment_releases(id, amount_cents, commission_cents, payee_cents, release_at, status), refunds(amount_cents)';
 
 type PaymentRow = {
   id: string; kind: PaymentKind; subject_id: string; payer_id: string; payee_id: string;
   price_cents: number; fee_cents: number; discount_cents: number | null; promo_code: string | null;
   status: string; created_at: string; expires_at: string;
-  payment_releases: { id: string; amount_cents: number; commission_cents: number; release_at: string; status: Release['status'] }[] | null;
+  payment_releases: {
+    id: string; amount_cents: number; commission_cents: number; payee_cents: number | null;
+    release_at: string; status: Release['status'];
+  }[] | null;
   refunds: { amount_cents: number }[] | null;
 };
 
@@ -162,6 +167,7 @@ function toPayment(row: PaymentRow, me: string | null): MyPayment {
     status: row.status, createdAt: row.created_at, expiresAt: row.expires_at,
     releases: (row.payment_releases ?? []).map((r) => ({
       id: r.id, amountCents: r.amount_cents, commissionCents: r.commission_cents, releaseAt: r.release_at, status: r.status,
+      payeeCents: r.payee_cents ?? null,
     })),
     refundedCents: (row.refunds ?? []).reduce((sum, r) => sum + r.amount_cents, 0),
   };
@@ -171,19 +177,21 @@ export async function fetchMyPayments(): Promise<MyPayment[]> {
   await ensureAppSession();
   const me = await currentAppUserId();
   const { data, error } = await supabase.from('payments').select(PAYMENT_COLUMNS)
-    .order('created_at', { ascending: false }).limit(100);
+    .order('created_at', { ascending: false }).limit(500);
   if (error) throw error;
   return ((data ?? []) as unknown as PaymentRow[]).map((row) => toPayment(row, me));
 }
 
-/** The checkout the member just started: their newest unpaid payment. */
-export async function fetchAwaitingPayment(): Promise<MyPayment | null> {
+/** The checkout the member just started: the unpaid payment for that booking,
+ *  reservation or event when its id is known, else their newest unpaid one. */
+export async function fetchAwaitingPayment(subjectId?: string): Promise<MyPayment | null> {
   await ensureAppSession();
   const me = await currentAppUserId();
   if (!me) return null;
-  const { data, error } = await supabase.from('payments').select(PAYMENT_COLUMNS)
-    .eq('payer_id', me).eq('status', 'awaiting_payment')
-    .order('created_at', { ascending: false }).limit(1);
+  let query = supabase.from('payments').select(PAYMENT_COLUMNS)
+    .eq('payer_id', me).eq('status', 'awaiting_payment');
+  if (subjectId) query = query.eq('subject_id', subjectId);
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(1);
   if (error) throw error;
   const row = (data ?? [])[0] as unknown as PaymentRow | undefined;
   return row ? toPayment(row, me) : null;

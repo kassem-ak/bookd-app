@@ -173,6 +173,8 @@ function calendarHelpers() {
       withdrawCancellation: async () => {}, suggestedRefundCents: () => 0,
     },
     '../components/RefundNegotiation': noop,
+    '../components/usePaymentConfig': { usePaymentConfig: () => ({}) },
+    '../lib/payments': { paymentsOn: () => false },
     '../state/models': { initials: () => '' },
     '../state/store': { useStore: () => ({}) },
     '../theme': { alpha: () => '', useTheme: () => ({ c: {}, t: {} }) },

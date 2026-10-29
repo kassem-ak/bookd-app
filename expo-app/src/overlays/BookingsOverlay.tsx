@@ -38,6 +38,8 @@ import {
   hasFulfilledSession, PackageCancellation, PackageProgress,
   progressSummary, requestCancellation, suggestedRefundCents, withdrawCancellation,
 } from '../lib/packages';
+import { usePaymentConfig } from '../components/usePaymentConfig';
+import { paymentsOn } from '../lib/payments';
 import { initials } from '../state/models';
 import { errorMessage, useStore } from '../state/store';
 import { alpha, useTheme } from '../theme';
@@ -47,6 +49,7 @@ const EMPTY: MyBookings = { upcoming: [], past: [] };
 export function BookingsOverlay() {
   const { c, t } = useTheme();
   const s = useStore();
+  const takesPayment = paymentsOn(usePaymentConfig(), 'package');
   const [bookings, setBookings] = useState<MyBookings>(EMPTY);
   const [packages, setPackages] = useState<PackageBalance[]>([]);
   // Counted from the bookings rather than a stored counter, so a cancelled
@@ -81,6 +84,8 @@ export function BookingsOverlay() {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // What a free cancel actually returned, as the server worked it out.
+  const [refundNote, setRefundNote] = useState<string | null>(null);
   const [view, setView] = useState<'list' | 'calendar'>('list');
 
   const load = useCallback(async () => {
@@ -153,6 +158,7 @@ export function BookingsOverlay() {
   // worse than one that is briefly a beat behind.
   const run = async (write: () => Promise<void>, fallback: string) => {
     setActionError(null);
+    setRefundNote(null);
     try {
       await write();
       await load();
@@ -188,6 +194,9 @@ export function BookingsOverlay() {
 
         {/* Above the view switch, not inside one branch: a cancel started in
             the calendar used to fail into a message only the list could show. */}
+        {refundNote && (
+          <Text style={[t.bodySm, { color: c.txt2, marginBottom: 10 }]}>{refundNote}</Text>
+        )}
         {actionError && (
           <Text accessibilityRole="alert" style={[t.bodySm, { color: c.danger, marginBottom: 10 }]}>
             {actionError}
@@ -403,9 +412,11 @@ export function BookingsOverlay() {
           title="Cancel this package?"
           body={givingBack
             ? `Neither of you has confirmed a session out of this ${givingBack.total}-session pack, `
-              + `so it is cancelled in full and ${formatCents(prices.get(givingBack.packageId) ?? 0)} `
-              + `goes back to you. ${givingBack.withName.split(' ')[0]} pays you directly — `
-              + 'BOOK’D records the amount and does not move the money.'
+              + (takesPayment
+                ? 'so it is cancelled. You get back what you paid for this pack, to the card or Whish account that paid.'
+                : `so it is cancelled in full and ${formatCents(prices.get(givingBack.packageId) ?? 0)} `
+                  + `goes back to you. ${givingBack.withName.split(' ')[0]} pays you directly — `
+                  + 'BOOK’D records the amount and does not move the money.')
             : ''}
           confirmLabel="Cancel the package"
           confirmIcon="x-circle"
@@ -417,7 +428,9 @@ export function BookingsOverlay() {
             const pack = givingBack;
             if (!pack) return;
             void run(async () => {
-              await cancelUnusedPackage(pack.coachId, pack.packageId);
+              const { refundCents, moved } = await cancelUnusedPackage(pack.coachId, pack.packageId);
+              setRefundNote(moved && refundCents > 0
+                ? `${formatCents(refundCents)} is on its way back to the card or Whish account that paid.` : null);
               track('package_cancelled_unused');
               setGivingBack(null);
             }, 'Could not cancel that package.');
@@ -444,7 +457,9 @@ export function BookingsOverlay() {
         >
           <Text style={[t.bodySm, { color: c.txt2 }]}>
             {asking ? asking.withName.split(' ')[0] : 'Your coach'} decides whether to cancel it and how much to give
-            back. BOOK’D does not move money — whatever you agree is paid between the two of you.
+            back. {takesPayment
+              ? 'Once you both agree, BOOK’D sends the refund back to the card or Whish account that paid.'
+              : 'BOOK’D does not move money — whatever you agree is paid between the two of you.'}
           </Text>
           <Text style={[t.caption, { color: c.txt3 }]}>
             Sessions you have already booked stay in your calendar. Cancel those separately if you do not want them.
@@ -568,7 +583,7 @@ function MonthCalendar({ sessions, confirmingId, cancellingId, onCancel, onKeep,
               <SessionCard key={session.id} booking={session}
                 confirming={confirmingId === session.id}
                 busy={cancellingId === session.id}
-                onAskCancel={canCancel(session.status) ? () => onCancel(session) : undefined}
+                onAskCancel={canCancel(session.status, session.scheduledFor) ? () => onCancel(session) : undefined}
                 onKeep={onKeep}
                 onConfirmCancel={() => onConfirmCancel(session)} />
             ))}
@@ -797,6 +812,7 @@ export function ProgressCard({ pack, withLabel, onBook, request, priceCents = 0,
   onSettled?: () => void;
 }) {
   const { c, t } = useTheme();
+  const takesPayment = paymentsOn(usePaymentConfig(), 'package');
   const spent = pack.taken + pack.booked + pack.pending;
   const filled = pack.total > 0 ? Math.min(Math.max(spent / pack.total, 0), 1) : 0;
   const card = (
@@ -860,10 +876,12 @@ export function ProgressCard({ pack, withLabel, onBook, request, priceCents = 0,
               <Text style={[t.bodySm, { color: c.danger }]}>
                 Cancelled{request.refundCents !== null ? ` · ${formatCents(request.refundCents)} back` : ''}
               </Text>
-              {/* Said plainly: the app records what the two of them agreed, it
-                  does not move anybody's money. */}
+              {/* Said plainly: with payments off the app only records what the
+                  two of them agreed; with them on it sends the refund back. */}
               <Text style={[t.caption, { color: c.txt3, marginTop: 2 }]}>
-                {pack.withName.split(' ')[0]} pays you directly — BOOK’D does not move money.
+                {takesPayment
+                  ? 'BOOK’D sends the refund back to the card or Whish account that paid.'
+                  : `${pack.withName.split(' ')[0]} pays you directly — BOOK’D does not move money.`}
               </Text>
             </>
           )}
@@ -952,10 +970,15 @@ function SessionCard({
   onConfirmDone?: () => void;
 }) {
   const { c, t } = useTheme();
+  const s = useStore();
+  const config = usePaymentConfig();
+  // With payments on, a pending coach session is one the booker has not paid
+  // for; with them off it is one the coach has not answered.
+  const payNow = booking.status === 'pending' && booking.kind === 'coach' && paymentsOn(config, 'session');
   const badge = statusTint(booking.status, c);
   const kind = kindTint(booking.kind, c);
   const when = formatSessionWhen(booking);
-  const cancellable = Boolean(onAskCancel) && canCancel(booking.status);
+  const cancellable = Boolean(onAskCancel) && canCancel(booking.status, booking.scheduledFor);
   // One two-step confirm serves two different decisions: dropping a session
   // you already have, and turning down one somebody just asked you for. The
   // mechanism underneath is the same call, but the person reading it pressed
@@ -987,7 +1010,14 @@ function SessionCard({
         </View>
         <Row gap={6}>
           <MicroBadge label={kind.label} bg={kind.bg} fg={kind.fg} />
-          <MicroBadge label={bookingStatusLabel(booking.status)} bg={badge.bg} fg={badge.fg} />
+          {payNow ? (
+            <Pressable onPress={() => s.set('overlay', 'paymentHistory')} accessibilityRole="button"
+              accessibilityLabel="Awaiting payment. Open payments to pay.">
+              <MicroBadge label="Awaiting payment" bg={badge.bg} fg={badge.fg} />
+            </Pressable>
+          ) : (
+            <MicroBadge label={bookingStatusLabel(booking.status)} bg={badge.bg} fg={badge.fg} />
+          )}
         </Row>
       </Row>
 

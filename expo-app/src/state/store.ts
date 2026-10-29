@@ -23,17 +23,8 @@ import {
   CommunityRole,
   EventItem,
   EventSuggestion,
-  Expense,
-  HistoryEntry,
-  MarginKey,
-  Margins,
-  MarginsShares,
-  Notif,
   Person,
-  Proposal,
   Role,
-  ShareKey,
-  Shares,
   Shop,
   CalProvider,
   coachPackageOptions,
@@ -51,14 +42,6 @@ import { blockUser, fetchBlockedUsers, unblockUser } from '../lib/moderation';
 import { fetchFollowedIds, followPerson, unfollowPerson } from '../lib/social';
 import { RsvpRef, rsvpSubject } from './courtsData';
 import * as D from './sampleData';
-
-// ---- number helpers (mirror the Kotlin/JS behavior) ----
-const round2 = (x: number) => Math.round(x * 100) / 100;
-const clampRound = (x: number) => round2(Math.max(0, Math.min(100, x)));
-export const numStr = (d: number) => String(round2(d));
-export const pct = (d: number) => numStr(d) + '%';
-export const fmtMoney = (n: number) =>
-  '$' + n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 const EXPLICIT = ['sex', 'sexual', 'sexy', 'nude', 'naked', 'nsfw', 'xxx', 'porn', 'escort', 'erotic', 'onlyfans', 'hookup', 'fetish'];
 export const isExplicit = (t: string) => {
@@ -118,8 +101,6 @@ const communityCode = (name: string) => {
   return (letters || name.slice(0, 2).toUpperCase()).slice(0, 2);
 };
 
-const marginGet = (m: Margins, k: string) => m[k as MarginKey];
-const shareGet = (s: Shares, k: string) => s[k] ?? 0;
 
 // PostgREST rejects with a plain `{ message, details, hint, code }` object
 // rather than an Error, so `String(error)` rendered "[object Object]" in the
@@ -283,6 +264,8 @@ export interface SpotterState {
   rsvpHours: number;
   rsvpGear: boolean;
   rsvpCoach: boolean;
+  /** The reservation or entry the last confirmRsvp created, so its checkout can be found by id. */
+  rsvpBookedId: string | null;
 
   // --- shared registration form: community | venue | shop ---
   regKind: string;
@@ -333,6 +316,8 @@ export interface SpotterState {
   bookSlot: string | null;
   bookPkg: number;
   booked: boolean;
+  /** The booking the last confirmBooking created, so its checkout can be found by id. */
+  bookedId: string | null;
 
   // prefs
   notifSeen: boolean;
@@ -396,21 +381,6 @@ export interface SpotterState {
   /** Where it was filed, as the server placed it -- shown on the receipt. */
   reqPlaced: string | null;
   reqSent: boolean;
-
-  // accounting
-  acctMargins: Margins;
-  acctShares: Shares;
-  acctDraft: MarginsShares | null;
-  acctProposal: Proposal | null;
-  acctAppliedNote: string | null;
-  acctNotif: Notif | null;
-  acctEdits: Record<string, string>;
-  acctExpItems: Expense[];
-  acctHistory: HistoryEntry[];
-  acctExpId: string | null;
-  acctExpName: string;
-  acctExpAmt: string;
-  acctExpRecur: string;
 
   // coach
   myCerts: Cert[];
@@ -516,29 +486,6 @@ export interface SpotterState {
   recordRegistration(kind: string, name: string, meta: string): void;
   decideRegistration(id: string, decision: string): void;
 
-  // accounting
-  revenue: number;
-  expTotal(): number;
-  net(): number;
-  effective(): MarginsShares;
-  acctDirty(): boolean;
-  acctEditable(): boolean;
-  sharesTotal(): number;
-  sharesOk(): boolean;
-  acctAdjust(group: string, key: string, delta: number): void;
-  acctEditRaw(group: string, key: string, text: string): void;
-  acctRawText(group: string, key: string): string;
-  submitProposal(): void;
-  discardDraft(): void;
-  approveAs(name: string): void;
-  cancelProposal(): void;
-  openExpenseNew(): void;
-  openExpenseEdit(e: Expense): void;
-  canSaveExpense(): boolean;
-  saveExpense(): void;
-  deleteExpense(): void;
-  payoutLabel(key: string): string;
-
   // coach
   addCert(name: string): void;
   removeCert(id: string): void;
@@ -558,21 +505,6 @@ export interface SpotterState {
   addPackage(): void;
   genCoachPromo(): void;
 }
-
-const current = (s: SpotterState): MarginsShares => ({ margins: s.acctMargins, shares: s.acctShares });
-const eq = (a: MarginsShares, b: MarginsShares) =>
-  JSON.stringify(a) === JSON.stringify(b);
-
-const chgLines = (from: MarginsShares, to: MarginsShares): string[] => {
-  const lines: string[] = [];
-  for (const [k, label] of D.marginDefs)
-    if (marginGet(from.margins, k) !== marginGet(to.margins, k))
-      lines.push(`${label}: ${pct(marginGet(from.margins, k))} → ${pct(marginGet(to.margins, k))}`);
-  for (const [k, label] of D.shareDefs)
-    if (shareGet(from.shares, k) !== shareGet(to.shares, k))
-      lines.push(`${label} share: ${pct(shareGet(from.shares, k))} → ${pct(shareGet(to.shares, k))}`);
-  return lines;
-};
 
 export const useStore = create<SpotterState>((set, get) => ({
   tab: 'discover',
@@ -613,6 +545,7 @@ export const useStore = create<SpotterState>((set, get) => ({
   rsvpHours: 1,
   rsvpGear: false,
   rsvpCoach: false,
+  rsvpBookedId: null,
 
   regKind: 'community',
   pendingRegistrations: [],
@@ -643,6 +576,7 @@ export const useStore = create<SpotterState>((set, get) => ({
   bookSlot: null,
   bookPkg: 0,
   booked: false,
+  bookedId: null,
   bookingChange: false,
 
   notifSeen: false,
@@ -700,20 +634,6 @@ export const useStore = create<SpotterState>((set, get) => ({
   reqType: 'Hobby',
   reqPlaced: null,
   reqSent: false,
-
-  acctMargins: { session: 0, shop: 0, boost: 0 },
-  acctShares: {},
-  acctDraft: null,
-  acctProposal: null,
-  acctAppliedNote: null,
-  acctNotif: null,
-  acctEdits: {},
-  acctExpItems: [...D.initialExpenses],
-  acctHistory: [...D.initialHistory],
-  acctExpId: null,
-  acctExpName: '',
-  acctExpAmt: '',
-  acctExpRecur: 'Monthly',
 
   myCerts: [],
   apptDecisions: {},
@@ -1177,14 +1097,14 @@ export const useStore = create<SpotterState>((set, get) => ({
     const pkg = coachPackageOptions(person)[s.bookPkg] ?? coachPackageOptions(person)[0];
     set({ writeBusy: 'booking', writeError: null });
     try {
-      await createBookingRemote(
+      const bookedId = await createBookingRemote(
         { id: person.id, name: person.name },
         scheduledFor(bookDate, bookSlot),
         `${pkg.name} - ${bookingDayLabel(bookDate)} - ${bookSlot}`,
         pkg.packageId,
         bookSlot,
       );
-      set({ booked: true, writeBusy: null });
+      set({ booked: true, bookedId: bookedId ?? null, writeBusy: null });
     } catch (error) {
       track('booking_failed', { error_code: analyticsErrorCode(error) });
       set(errorState(error));
@@ -1283,10 +1203,11 @@ export const useStore = create<SpotterState>((set, get) => ({
       return false;
     }
 
-    set({ writeBusy: 'rsvp', writeError: null });
+    set({ writeBusy: 'rsvp', writeError: null, rsvpBookedId: null });
+    let bookedId: string | null = null;
     try {
       if (subject.perHour && subject.court) {
-        await reserveCourt({
+        bookedId = await reserveCourt({
           courtId: subject.court.id,
           startsAt: st.rsvpStartsAt as string,
           hours: st.rsvpHours,
@@ -1294,7 +1215,7 @@ export const useStore = create<SpotterState>((set, get) => ({
           equipment: st.rsvpGear,
         });
       } else if (subject.event) {
-        await enterVenueEvent(subject.event.id);
+        bookedId = await enterVenueEvent(subject.event.id);
       } else {
         throw new Error('That slot is unavailable right now.');
       }
@@ -1308,7 +1229,7 @@ export const useStore = create<SpotterState>((set, get) => ({
     // The sheet is left open on purpose: it swaps to a receipt naming what was
     // booked. Closing here is what made a successful reservation indis-
     // tinguishable from a dismissed one.
-    set({ writeBusy: null });
+    set({ writeBusy: null, rsvpBookedId: bookedId ?? null });
     await get().refreshCourtReservations();
     // "Add a coach" routes into the coach calendar; go through openBooking so a
     // previous confirmation screen is cleared first.
@@ -1346,148 +1267,6 @@ export const useStore = create<SpotterState>((set, get) => ({
       shopRegEmail: '',
       shopRegDone: false,
     }),
-  revenue: D.revenue,
-  expTotal: () => get().acctExpItems.reduce((a, e) => a + e.amt, 0),
-  net: () => round2(get().revenue - get().expTotal()),
-  effective: () => get().acctDraft ?? current(get()),
-  acctDirty: () => {
-    const s = get();
-    return s.acctDraft !== null && !eq(s.acctDraft, current(s));
-  },
-  acctEditable: () => get().acctProposal === null,
-  sharesTotal: () => Object.values(get().effective().shares).reduce((sum, share) => sum + share, 0),
-  sharesOk: () => Math.abs(get().sharesTotal() - 100) < 0.005,
-
-  acctAdjust: (group, key, delta) => {
-    const s = get();
-    if (s.acctProposal !== null) return;
-    const base = s.acctDraft ?? current(s);
-    const draft: MarginsShares =
-      group === 'margins'
-        ? { ...base, margins: { ...base.margins, [key]: clampRound(marginGet(base.margins, key) + delta) } }
-        : { ...base, shares: { ...base.shares, [key]: clampRound(shareGet(base.shares, key) + delta) } };
-    const edits = { ...s.acctEdits };
-    delete edits[`${group}:${key}`];
-    set({ acctDraft: draft, acctEdits: edits });
-  },
-  acctEditRaw: (group, key, text) => {
-    const s = get();
-    if (s.acctProposal !== null) return;
-    const edits = { ...s.acctEdits, [`${group}:${key}`]: text };
-    const num = parseFloat(text);
-    let draft = s.acctDraft;
-    if (!isNaN(num) && num >= 0 && num <= 100) {
-      const base = s.acctDraft ?? current(s);
-      const r = round2(num);
-      draft =
-        group === 'margins'
-          ? { ...base, margins: { ...base.margins, [key]: r } }
-          : { ...base, shares: { ...base.shares, [key]: r } };
-    }
-    set({ acctEdits: edits, acctDraft: draft });
-  },
-  acctRawText: (group, key) => {
-    const s = get();
-    const raw = s.acctEdits[`${group}:${key}`];
-    if (raw !== undefined) return raw;
-    const eff = s.effective();
-    return numStr(group === 'margins' ? marginGet(eff.margins, key) : shareGet(eff.shares, key));
-  },
-
-  submitProposal: () => {
-    const s = get();
-    if (!s.acctDirty() || !s.sharesOk() || s.acctProposal !== null) return;
-    const d = s.acctDraft;
-    if (!d) return;
-    set({
-      acctProposal: { to: d, lines: chgLines(current(s), d), approvals: [s.authName ?? 'This admin'] },
-      acctDraft: null,
-      acctEdits: {},
-      acctAppliedNote: null,
-    });
-  },
-  discardDraft: () => set({ acctDraft: null, acctEdits: {} }),
-  approveAs: (name) => {
-    const s = get();
-    const prop = s.acctProposal;
-    if (!prop || prop.approvals.includes(name)) return;
-    const approvals = [...prop.approvals, name];
-    if (approvals.length >= 3) {
-      const marginChanged = D.marginDefs.some(([k]) => marginGet(s.acctMargins, k) !== marginGet(prop.to.margins, k));
-      const entry: HistoryEntry = {
-        whenLabel: 'Just now',
-        title: marginChanged ? 'Margins & shares updated' : 'Profit shares updated',
-        detail: prop.lines.join(' · '),
-        meta: 'Approved by 3 admins' + (marginChanged ? ' · affected users notified' : ' · internal only'),
-      };
-      const patch: Partial<SpotterState> = {
-        acctMargins: prop.to.margins,
-        acctShares: prop.to.shares,
-        acctProposal: null,
-        acctHistory: [entry, ...s.acctHistory],
-        acctAppliedNote:
-          'Approved by 3 admins — change is live.' +
-          (marginChanged ? ' Affected users were notified.' : ' Internal change · no users affected.'),
-      };
-      if (marginChanged) {
-        patch.acctNotif = {
-          whenLabel: 'Just now',
-          title: 'Platform fees updated',
-          body:
-            prop.lines.filter((l) => !l.includes(' share:')).join(' · ') +
-            '. Applies to all new transactions starting now.',
-        };
-        patch.notifSeen = false;
-      }
-      set(patch);
-    } else {
-      set({ acctProposal: { ...prop, approvals } });
-    }
-  },
-  cancelProposal: () => set({ acctProposal: null }),
-
-  openExpenseNew: () => set({ acctExpId: null, acctExpName: '', acctExpAmt: '', acctExpRecur: 'Monthly', overlay: 'acctExpense' }),
-  openExpenseEdit: (e) => set({ acctExpId: e.id, acctExpName: e.label, acctExpAmt: numStr(e.amt), acctExpRecur: e.recur, overlay: 'acctExpense' }),
-  canSaveExpense: () => {
-    const s = get();
-    const amt = parseFloat(s.acctExpAmt);
-    return s.acctExpName.trim().length > 1 && !isNaN(amt) && amt > 0;
-  },
-  saveExpense: () => {
-    const s = get();
-    if (!s.canSaveExpense()) return;
-    const amt = round2(parseFloat(s.acctExpAmt));
-    const id = s.acctExpId ?? `e${Date.now()}`;
-    const item: Expense = { id, label: s.acctExpName.trim(), amt, recur: s.acctExpRecur };
-    const editing = s.acctExpId !== null;
-    const items = editing ? s.acctExpItems.map((x) => (x.id === s.acctExpId ? item : x)) : [...s.acctExpItems, item];
-    const entry: HistoryEntry = {
-      whenLabel: 'Just now',
-      title: editing ? 'Expense updated' : 'Expense added',
-      detail: `${item.label}: ${fmtMoney(amt)} (${item.recur})`,
-      meta: `By ${s.authName ?? 'this admin'}`,
-    };
-    set({ acctExpItems: items, acctHistory: [entry, ...s.acctHistory], overlay: 'adminAccounting' });
-  },
-  deleteExpense: () => {
-    const s = get();
-    const e = s.acctExpItems.find((x) => x.id === s.acctExpId);
-    if (e) {
-      const entry: HistoryEntry = {
-        whenLabel: 'Just now',
-        title: 'Expense removed',
-        detail: `${e.label}: ${fmtMoney(e.amt)} (${e.recur})`,
-        meta: `By ${s.authName ?? 'this admin'}`,
-      };
-      set({ acctExpItems: s.acctExpItems.filter((x) => x.id !== s.acctExpId), acctHistory: [entry, ...s.acctHistory] });
-    }
-    set({ overlay: 'adminAccounting' });
-  },
-  payoutLabel: (key) => {
-    const s = get();
-    return fmtMoney(Math.round((s.net() * shareGet(s.effective().shares, key)) / 100)) + ' / mo';
-  },
-
   addCert: (name) =>
     set((s) => ({ myCerts: [...s.myCerts, { id: `ct${Date.now()}`, name, issuer: 'Awaiting verification', year: '2026', verified: false }] })),
   removeCert: (id) => set((s) => ({ myCerts: s.myCerts.filter((x) => x.id !== id) })),

@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Text, View } from 'react-native';
+import { CheckoutPanel } from '../components/CheckoutPanel';
 import { CommunityFields } from '../components/CommunityFields';
 import { MissingSubject, OverlayHeader, OverlayScaffold } from '../components/Overlay';
 import {
   Avatar, Button, Card, Chip, ConfirmSheet, Field, Icon, IconButton, MicroBadge, Row,
   SectionHeading, Segmented, StripedPlaceholder, VoltButton,
 } from '../components/ui';
+import { usePaymentConfig } from '../components/usePaymentConfig';
 import {
-  EventDetail, EventPhoto, feeLabel, fetchEvent, fetchEventPhotos,
+  EventDetail, EventPhoto, feeLabel, fetchEvent, fetchEventPhotos, rsvpToEvent,
 } from '../lib/events';
+import { fetchAwaitingPayment, paymentsOn } from '../lib/payments';
 import { CommunityRole, EventSuggestion, isMeetup } from '../state/models';
 import * as D from '../state/sampleData';
 import { eventDayOptions, isExplicit, useStore } from '../state/store';
@@ -99,7 +102,13 @@ export function EventDetailOverlay() {
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [photos, setPhotos] = useState<EventPhoto[]>([]);
   const [withdrawing, setWithdrawing] = useState(false);
+  const paymentConfig = usePaymentConfig();
+  const eventTakesPayment = paymentsOn(paymentConfig, 'event') && (detail?.feeCents ?? 0) > 0;
+  const [paying, setPaying] = useState(false);
+  const [rsvpError, setRsvpError] = useState<string | null>(null);
+  const [rsvpBusy, setRsvpBusy] = useState(false);
   const evId = ev?.id ?? null;
+  useEffect(() => { setPaying(false); setRsvpError(null); setRsvpBusy(false); }, [evId]);
   useEffect(() => {
     if (!evId) { setDetail(null); setPhotos([]); return; }
     let active = true;
@@ -115,6 +124,8 @@ export function EventDetailOverlay() {
   }, [evId]);
 
   const manages = s.canModerateCommunity(s.communityId);
+  // The server refuses leaving once the event has started; so does the button.
+  const started = detail?.startsAt ? Date.parse(detail.startsAt) <= Date.now() : false;
   if (!ev) return <MissingSubject title="Event" message="This event is no longer listed." onBack={() => s.set('overlay', s.returnTo)} />;
   return (
     <OverlayScaffold
@@ -133,25 +144,52 @@ export function EventDetailOverlay() {
               has been taken. */}
           {(detail?.feeCents ?? 0) > 0 && (
             <Text style={[t.bodySm, { color: c.amberText, marginBottom: 10 }]}>
-              {feeLabel(detail!.feeCents)} per person, settled with the organiser directly.
+              {eventTakesPayment
+                ? `${feeLabel(detail!.feeCents)} per person, paid now and held by BOOK'D until the event.`
+                : `${feeLabel(detail!.feeCents)} per person, settled with the organiser directly.`}
             </Text>
           )}
+          {paying && (
+            <View style={{ marginBottom: 12 }}>
+              <CheckoutPanel
+                subjectId={ev.id}
+                onPaid={() => { setPaying(false); void s.toggleGoing(ev.id); }}
+                onNone={() => { setPaying(false); setRsvpError('Your place was released. Try again.'); }}
+              />
+            </View>
+          )}
+          {rsvpError && <Text accessibilityRole="alert" style={[t.bodySm, { color: c.danger, marginBottom: 10 }]}>{rsvpError}</Text>}
           <Button
             label={going ? "You're going" : (detail?.feeCents ?? 0) > 0 ? `I'm going · ${feeLabel(detail!.feeCents)}` : "I'm going"}
             icon={going ? 'check' : 'user-plus'}
             tone={going ? 'secondary' : 'primary'}
             full
             height={52}
+            enabled={!rsvpBusy && !(going && started)}
             accessibilityLabel={going
               ? `You are going to ${ev.title}. Press to change your mind.`
               : `Say you are going to ${ev.title}`}
-            onPress={() => (going ? setWithdrawing(true) : s.toggleGoing(ev.id))}
+            onPress={() => {
+              if (going) { if (!started) setWithdrawing(true); return; }
+              // The server says whether there is a checkout for this event:
+              // a pending place with no open payment is settled by hand.
+              setRsvpError(null);
+              setRsvpBusy(true);
+              void rsvpToEvent(ev.id, true)
+                .then(async (outcome) => {
+                  const open = outcome.payment === 'pending' ? await fetchAwaitingPayment(ev.id) : null;
+                  if (open) setPaying(true);
+                  else void s.toggleGoing(ev.id);
+                })
+                .catch((e) => setRsvpError(e instanceof Error ? e.message : 'Could not save your RSVP.'))
+                .finally(() => setRsvpBusy(false));
+            }}
           />
           {/* Only withdrawing asks. Saying yes to an event is yours alone to
               undo, but taking the place back reaches the organiser's headcount
               and cannot be put right by pressing again if it filled. */}
           <ConfirmSheet
-            visible={withdrawing}
+            visible={withdrawing && !started}
             title="Not going any more?"
             body="Your place is given up and the organiser sees you are not coming."
             confirmLabel="I'm not going"

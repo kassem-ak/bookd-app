@@ -5,8 +5,10 @@ import {
   Animated,
   Easing,
   Modal,
+  Platform,
   Pressable,
   Image,
+  ImageStyle,
   ScrollView,
   StyleProp,
   StyleSheet,
@@ -724,6 +726,45 @@ export function PhotoScrim({ from, opacity }: { from: number; opacity: number })
   );
 }
 
+// ---- Pill blur ----
+// The design frosts the pills over a photo. The web has backdrop-filter; native
+// would need a blur library the app does not carry, so there the pill's own
+// semi-opaque fill does the work alone.
+export const pillBlur = Platform.OS === 'web'
+  ? ({ backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } as unknown as ViewStyle)
+  : null;
+
+// ---- Cover photo ----
+// `resizeMode="cover"` always centres the picture, and the design pins it 22%
+// from the top (the handoff's `object-position: 50% 22%`), which is where a
+// face or a product usually is. So: measure it, size it to cover the box, and
+// slide it up only as far as keeps that line in frame. Until the size is known
+// it draws centred, which is what it did before.
+export function CoverPhoto({ uri, focusY = 0.22, onError }: { uri: string; focusY?: number; onError: () => void }) {
+  const [box, setBox] = React.useState<{ w: number; h: number } | null>(null);
+  const [natural, setNatural] = React.useState<{ w: number; h: number } | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    setNatural(null);
+    // The callback form: react-native-web has no promise one.
+    Image.getSize(uri, (w, h) => { if (live && w > 0 && h > 0) setNatural({ w, h }); }, () => {});
+    return () => { live = false; };
+  }, [uri]);
+  let frame: ImageStyle = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
+  if (box && natural) {
+    const scale = Math.max(box.w / natural.w, box.h / natural.h);
+    const w = natural.w * scale;
+    const h = natural.h * scale;
+    frame = { position: 'absolute', width: w, height: h, left: (box.w - w) / 2, top: -(h - box.h) * focusY };
+  }
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}
+      onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+      <Image source={{ uri }} onError={onError} resizeMode="cover" style={frame} accessibilityIgnoresInvertColors />
+    </View>
+  );
+}
+
 // ---- Reduce motion ----
 // Starts true: until the setting is known, nothing moves.
 export function useReduceMotion() {
@@ -785,6 +826,11 @@ export function PageDots({ count, index }: { count: number; index: number }) {
 //
 // `bleed` is the screen gutter the row escapes; `glow` is extra room above and
 // below for a card shadow the scroll view would otherwise clip.
+// react-native-web ignores snapToInterval, so on the web the row snaps with
+// CSS scroll snap instead. The padding keeps the snapped card off the edge.
+const WEB_SNAP_ROW = Platform.OS === 'web' ? ({ scrollSnapType: 'x mandatory' } as unknown as ViewStyle) : null;
+const WEB_SNAP_CARD = Platform.OS === 'web' ? ({ scrollSnapAlign: 'start' } as unknown as ViewStyle) : null;
+
 export function SnapCarousel<T>({
   items,
   keyOf,
@@ -793,6 +839,7 @@ export function SnapCarousel<T>({
   peek = 28,
   bleed = 18,
   glow = 0,
+  onIndexChange,
 }: {
   items: T[];
   keyOf: (item: T) => string;
@@ -801,6 +848,8 @@ export function SnapCarousel<T>({
   peek?: number;
   bleed?: number;
   glow?: number;
+  /** The card now at the start of the row, once it is on screen. */
+  onIndexChange?: (index: number) => void;
 }) {
   const [rowWidth, setRowWidth] = React.useState(0);
   const [index, setIndex] = React.useState(0);
@@ -809,6 +858,20 @@ export function SnapCarousel<T>({
   // A filter that shrinks the list must not leave the dots on a card that is
   // no longer there.
   const shown = Math.min(index, Math.max(items.length - 1, 0));
+  const visible = rowWidth > 0 && items.length > 0;
+  const report = React.useRef(onIndexChange);
+  report.current = onIndexChange;
+  const announced = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (!visible) return;
+    report.current?.(shown);
+    // The dots are hidden from screen readers, so say where the row now is.
+    // Not on first draw: the reader is already reading the first card.
+    if (announced.current !== null && announced.current !== shown && items.length > 1) {
+      AccessibilityInfo.announceForAccessibility(`${shown + 1} of ${items.length}`);
+    }
+    announced.current = shown;
+  }, [shown, visible, items.length]);
   return (
     <View onLayout={(e) => setRowWidth(e.nativeEvent.layout.width)}>
       {rowWidth > 0 && <>
@@ -824,10 +887,10 @@ export function SnapCarousel<T>({
             const next = Math.round(e.nativeEvent.contentOffset.x / step);
             if (next !== index) setIndex(next);
           }}
-          style={{ marginHorizontal: -bleed, marginVertical: -glow }}
+          style={[{ marginHorizontal: -bleed, marginVertical: -glow }, WEB_SNAP_ROW && { ...WEB_SNAP_ROW, scrollPaddingLeft: bleed } as ViewStyle]}
           contentContainerStyle={{ paddingHorizontal: bleed, paddingVertical: glow, gap }}
         >
-          {items.map((item) => <View key={keyOf(item)} style={{ width: cardWidth }}>{renderItem(item, cardWidth)}</View>)}
+          {items.map((item) => <View key={keyOf(item)} style={[{ width: cardWidth }, WEB_SNAP_CARD]}>{renderItem(item, cardWidth)}</View>)}
         </ScrollView>
         <PageDots count={items.length} index={shown} />
       </>}

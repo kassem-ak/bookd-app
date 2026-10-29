@@ -181,3 +181,15 @@ test('detach stops future sends, replacement flushes records after an old sink r
   assert.equal(records.length, 2);
   assert.equal(h.jobs.length, 0);
 });
+
+test('an ad id goes through only as a uuid, with its placement', async () => {
+  const h = harness();
+  const id = randomUUID();
+  h.api.track('ad_viewed', { ad_id: id, placement: 'discover' });
+  h.api.track('ad_opened', { ad_id: 'a@example.com', placement: 'somewhere' });
+  const records = [];
+  h.api.setSink({ send: async (batch) => records.push(...batch) });
+  await h.tick();
+  assert.deepEqual(plain(records[0].props), { placement: 'discover', ad_id: id });
+  assert.deepEqual(plain(records[1].props), {});
+});

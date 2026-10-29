@@ -29,8 +29,8 @@ alter table public.ads
 create table if not exists public.ad_daily_stats (
   ad_id uuid not null references public.ads(id) on delete cascade,
   day   date not null default (now() at time zone 'utc')::date,
-  views integer not null default 0 check (views >= 0),
-  opens integer not null default 0 check (opens >= 0),
+  views bigint not null default 0 check (views >= 0),
+  opens bigint not null default 0 check (opens >= 0),
   primary key (ad_id, day)
 );
 

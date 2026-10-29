@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
-  Avatar, Button, Card, Chip, Field, Icon, MicroBadge, Note, Row, SectionHeading, Segmented, Stars,
+  Avatar, Button, Card, Chip, Field, Icon, MicroBadge, Note, PhotoScrim, Row, SectionHeading, Segmented, SnapCarousel, Stars,
   StatusLine,
 } from '../components/ui';
+import { AdCard } from '../components/AdCard';
+import { fetchSponsoredAds, SponsoredAd } from '../lib/ads';
 import { distanceKmBetween, formatDistanceKm, GeoPoint, getDevicePoint, parseGeoPoint } from '../lib/geo';
 import { track } from '../lib/analytics';
 import { Person, firstName, initials } from '../state/models';
@@ -12,7 +14,7 @@ import * as D from '../state/sampleData';
 import { useSports } from '../components/useSports';
 import { SportSearch } from '../components/SportSearch';
 import { useStore } from '../state/store';
-import { alpha, useTheme } from '../theme';
+import { alpha, dark, fonts, useTheme } from '../theme';
 
 
 type GeoPerson = Person & { coordinates?: GeoPoint | null };
@@ -43,6 +45,12 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
   const isCoaches = s.mode === 'coaches';
   const setStoreValue = useStore((state) => state.set);
   const [devicePoint, setDevicePoint] = useState<GeoPoint | null | undefined>(undefined);
+  const [ads, setAds] = useState<SponsoredAd[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetchSponsoredAds('discover').then((rows) => { if (active) setAds(rows); });
+    return () => { active = false; };
+  }, []);
   const query = s.discSearch;
   const setQuery = (value: string) => {
     s.set('discSearch', value);
@@ -105,9 +113,12 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
   }, [sortOffered.join(','), s.sortBy, setStoreValue]);
 
   const activeSortBy = s.sortBy === 'distance' && !canSortByDistance ? null : s.sortBy;
-  const featured = entries.filter((entry) => entry.person.boosted);
+  // Boosting buys the carousel, not a place out of the list: a boosted coach
+  // is still where the chosen sort puts them below, so sorting by price still
+  // shows every coach in price order.
+  const featured = isCoaches ? entries.filter((entry) => entry.person.boosted) : [];
   const rest = entries
-    .filter((entry) => !entry.person.boosted)
+    .slice()
     .sort((a, b) => {
       if (activeSortBy === 'price') return (a.person.price ?? 0) - (b.person.price ?? 0);
       if (activeSortBy === 'distance') {
@@ -216,12 +227,18 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
         <Field value={query} onChange={setQuery} placeholder="Search Coach, Mentor" icon="search" />
       </View>
 
-      {featured.length > 0 && <>
-        <SectionHeading style={{ marginTop: 26, marginBottom: 11 }}>Featured {isCoaches ? 'coaches' : 'partners'}</SectionHeading>
-        <View style={{ gap: 12 }}>
-          {featured.map(({ person, distanceLabel }) => <PersonCard key={person.id} p={person} distanceLabel={distanceLabel} onPress={() => s.openPerson(person.id)} />)}
-        </View>
-      </>}
+      {/* Keyed by mode so switching coaches|Partners starts each carousel
+          back at its first card. */}
+      {featured.length > 0 && <View key="featured-coaches">
+        <SectionHeading style={{ marginTop: 26, marginBottom: 11 }}>Featured coaches</SectionHeading>
+        <SnapCarousel items={featured} keyOf={({ person }) => person.id} glow={14}
+          renderItem={({ person, distanceLabel }, width) => (
+            <FeaturedCoachCard p={person} width={width} distanceLabel={distanceLabel} onPress={() => s.openPerson(person.id)} />
+          )} />
+      </View>}
+      {!isCoaches && ads.length > 0 && <View key="partner-ads" style={{ marginTop: 26 }}>
+        <SnapCarousel items={ads} keyOf={(ad) => ad.id} renderItem={(ad, width) => <AdCard ad={ad} width={width} />} />
+      </View>}
 
       <Row style={{ marginTop: 26, marginBottom: 11, justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <SectionHeading>All {isCoaches ? 'coaches' : 'partners'}</SectionHeading>
@@ -253,6 +270,68 @@ export function DiscoverScreen({ loadError, onRetry }: { loadError?: string | nu
         {rest.map(({ person, distanceLabel }) => <PersonCard key={person.id} p={person} distanceLabel={distanceLabel} onPress={() => s.openPerson(person.id)} />)}
       </View>
     </ScrollView>
+  );
+}
+
+// A boosted coach, as a photo card in the Featured carousel.
+//
+// Drawn dark in both themes: white type sits on the photo, held up by the
+// scrim. The gold edge is a shadow on the outer view and the clipping on the
+// inner one, because a view that clips also clips its own outer shadow.
+function FeaturedCoachCard({ p, width, distanceLabel, onPress }: {
+  p: Person; width: number; distanceLabel?: string | null; onPress: () => void;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const photo = p.avatarUrl && p.avatarUrl !== failedUrl ? p.avatarUrl : null;
+  const meta = personMetaLabel(p, distanceLabel);
+  const hasPrice = Number(p.price) > 0;
+  const rating = p.reviews > 0 ? `${p.rating.toFixed(1)} (${p.reviews})` : null;
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button"
+      accessibilityLabel={[`${p.name}, boosted coach`, meta, rating && `rated ${rating}`, hasPrice && `$${p.price} per session`].filter(Boolean).join(', ')}
+      style={{
+        width,
+        height: 228,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(242,200,75,0.45)',
+        backgroundColor: dark.surface2,
+        boxShadow: '0 0 16px rgba(242,200,75,0.22), inset 0 0 12px rgba(242,200,75,0.12)',
+      }}>
+      <View style={[StyleSheet.absoluteFill, { borderRadius: 21, overflow: 'hidden' }]}>
+        {photo ? (
+          <Image source={{ uri: photo }} onError={() => setFailedUrl(photo)} resizeMode="cover"
+            style={StyleSheet.absoluteFill} accessibilityIgnoresInvertColors />
+        ) : (
+          // No photo: the initials, large, where the face would be.
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: dark.avatarBg, alignItems: 'center', paddingTop: 44 }]}>
+            <Text style={{ fontFamily: fonts.archivo800, fontSize: 56, color: 'rgba(255,255,255,0.22)' }}>{initials(p.name)}</Text>
+          </View>
+        )}
+        <PhotoScrim from={0.35} opacity={0.92} />
+      </View>
+
+      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(13,14,17,0.72)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+        <Text style={{ fontFamily: fonts.archivo800, fontSize: 9, letterSpacing: 0.8, color: dark.amber }}>BOOSTED</Text>
+      </View>
+
+      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 14, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ fontFamily: fonts.archivo800, fontSize: 21, letterSpacing: -0.4, color: '#FFFFFF' }}>{p.name}</Text>
+          <Text numberOfLines={1} style={{ fontFamily: fonts.hanken400, fontSize: 13, color: 'rgba(255,255,255,0.78)', marginTop: 3 }}>{meta}</Text>
+          {rating && <Row gap={4} style={{ marginTop: 6 }}>
+            <Text style={{ fontSize: 12, color: dark.amber }}>★</Text>
+            <Text style={{ fontFamily: fonts.hanken700, fontSize: 13, color: dark.amber }}>{rating}</Text>
+          </Row>}
+        </View>
+        {/* Same rule as the list card: no rate set is not a free coach, so
+            say nothing rather than $0. */}
+        {hasPrice && <View style={{ alignItems: 'flex-end' }}>
+          <Text style={{ fontFamily: fonts.archivo800, fontSize: 22, color: dark.volt, fontVariant: ['tabular-nums'] }}>${p.price}</Text>
+          <Text style={{ fontFamily: fonts.hanken400, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>per session</Text>
+        </View>}
+      </View>
+    </Pressable>
   );
 }
 
